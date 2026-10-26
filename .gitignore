@@ -1,0 +1,14 @@
+# Build
+tweaksd/tweaksd
+tweaksd/*.o
+
+# macOS
+.DS_Store
+._*
+__MACOSX/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
