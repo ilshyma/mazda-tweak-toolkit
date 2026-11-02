@@ -194,6 +194,9 @@ info "  trigger files copied (t, tweaks.sh, jci-autoupdate, dataRetrieval_config
 
   cp "$DIR/jci-app/tweaks-menu.js" /Volumes/MZD_TWEAKS/tweaks-manager/jci-app/tweaks-menu.js
 
+  cp "$DIR/VERSION" /Volumes/MZD_TWEAKS/tweaks-manager/VERSION 2>/dev/null || true
+  cp "$DIR/TWEAK_CONTRACT.md" /Volumes/MZD_TWEAKS/tweaks-manager/TWEAK_CONTRACT.md 2>/dev/null || true
+
   for tweak in "$DIR/tweaks/"*/; do
     name=$(basename "$tweak")
     mkdir -p "/Volumes/MZD_TWEAKS/tweaks-manager/tweaks/$name"
