@@ -37,12 +37,13 @@ done
 hdr "Prepare Tweaks Manager USB"
 
 # --- Check prerequisites ----------------------------------------------------
-if [ ! -f "$DIR/tweaksd/tweaksd" ]; then
-  err "tweaksd binary not found — run: make -C tweaksd"
+if [ ! -f "$DIR/installer/tweaksd" ]; then
+  err "tweaksd binary not found at installer/tweaksd"
+  err "build it: make -C tweaksd && cp tweaksd/tweaksd installer/tweaksd"
   exit 1
 fi
-file "$DIR/tweaksd/tweaksd" | grep -q "ARM" || {
-  err "tweaksd is not an ARM binary — rebuild with: make -C tweaksd clean all"
+file "$DIR/installer/tweaksd" | grep -q "ARM" || {
+  err "installer/tweaksd is not an ARM binary — rebuild with: make -C tweaksd clean all"
   exit 1
 }
 
@@ -186,7 +187,7 @@ info "  trigger files copied (t, tweaks.sh, jci-autoupdate, dataRetrieval_config
   mkdir -p /Volumes/MZD_TWEAKS/tweaks-manager/jci-app
 
   cp "$DIR/installer/tweaks.sh" /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaks.sh
-  cp "$DIR/tweaksd/tweaksd" /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaksd
+  cp "$DIR/installer/tweaksd" /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaksd
   chmod 755 /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaksd
 
   cp "$DIR/lib/patch.sh" /Volumes/MZD_TWEAKS/tweaks-manager/lib/patch.sh
@@ -284,7 +285,7 @@ else
 fi
 
 if file /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaksd | grep -q "ARM"; then
-  ok "  tweaksd: ARM binary"
+  ok "  tweaksd: ARM binary (from installer/)"
 else
   err "  tweaksd: NOT an ARM binary"
   problems=$((problems+1))
