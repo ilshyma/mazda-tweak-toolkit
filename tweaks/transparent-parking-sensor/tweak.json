@@ -1,0 +1,18 @@
+{
+  "id": "transparent-parking-sensor",
+  "name": "Semi-Transparent Parking Sensors",
+  "version": "1.0.0",
+  "description": "Makes parking sensor overlay semi-transparent so it does not obscure the reverse camera view",
+  "author": "vic_bam85 / Diginix (MZD-AIO)",
+  "min_firmware": "74.00.324",
+  "max_firmware": "74.00.324A",
+  "requires_reboot": false,
+  "regions": ["EU", "NA"],
+  "modifies": [
+    "/jci/nativegui/images/HorizontalSensors",
+    "/jci/nativegui/images/VerticalSensors",
+    "/jci/nativegui/images/MiniView"
+  ],
+  "conflicts_with": [],
+  "depends_on": []
+}

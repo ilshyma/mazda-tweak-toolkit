@@ -1,0 +1,20 @@
+{
+  "id": "hud-carplay-nav",
+  "name": "CarPlay + AA HUD Navigation",
+  "version": "2.4.3",
+  "description": "Turn-by-turn navigation from CarPlay and Android Auto on the windshield HUD with km/h speed-limit fix",
+  "author": "ilshyma",
+  "min_firmware": "74.00.324",
+  "max_firmware": "74.00.324A",
+  "requires_reboot": true,
+  "regions": ["EU"],
+  "modifies": [
+    "/jci/sm/sm.conf",
+    "/jci/sm/sm_WCP.conf",
+    "/etc/devmgr_config_master.xml",
+    "/etc/aap_system_attributes.xml",
+    "/etc/aap_system_attributes_UCP.xml"
+  ],
+  "conflicts_with": [],
+  "depends_on": []
+}

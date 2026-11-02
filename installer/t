@@ -1,0 +1,11 @@
+#!/bin/sh
+# .up trampoline — called via CVE-2024-8359 filename injection
+# Atomic lock to prevent double-execution
+L=/tmp/tweaksd-up-lock
+mkdir "$L" 2>/dev/null || exit 0
+echo $$ > "$L/pid"
+# find our USB mount
+for d in /tmp/mnt/sd[abcd]1 /mnt/sd[abcd]1; do
+    [ -f "$d/tweaks-manager/installer/tweaks.sh" ] && { sh "$d/tweaks-manager/installer/tweaks.sh" "$d"; break; }
+done
+rm -rf "$L"

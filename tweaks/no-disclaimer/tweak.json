@@ -1,0 +1,16 @@
+{
+  "id": "no-disclaimer",
+  "name": "No More Disclaimer",
+  "version": "1.0.0",
+  "description": "Auto-dismisses the safety disclaimer on startup (3.5s wait removed)",
+  "author": "Tweaks Manager",
+  "min_firmware": "74.00.324",
+  "max_firmware": "74.00.324A",
+  "requires_reboot": true,
+  "regions": ["EU", "NA"],
+  "modifies": [
+    "/jci/gui/apps/system/js/systemApp.js"
+  ],
+  "conflicts_with": [],
+  "depends_on": []
+}

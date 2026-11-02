@@ -1,0 +1,25 @@
+{
+  "id": "no-camera-warning",
+  "name": "Camera Safety Warning Removal",
+  "version": "1.0.0",
+  "description": "Removes the safety warning text overlay from the reverse camera view",
+  "author": "Tweaks Manager",
+  "min_firmware": "74.00.324",
+  "max_firmware": "74.00.324A",
+  "requires_reboot": false,
+  "regions": ["EU", "NA"],
+  "modifies": [
+    "/jci/nativegui/images/SafetyText_US_English.png",
+    "/jci/nativegui/images/SafetyText_UK_English.png",
+    "/jci/nativegui/images/SafetyText_DE_German.png",
+    "/jci/nativegui/images/SafetyText_FR_French.png",
+    "/jci/nativegui/images/SafetyText_IT_Italian.png",
+    "/jci/nativegui/images/SafetyText_SP_Spanish.png",
+    "/jci/nativegui/images/SafetyText_RU_Russian.png",
+    "/jci/nativegui/images/SafetyText_PL_Polish.png",
+    "/jci/nativegui/images/SafetyText_NL_Dutch.png",
+    "/jci/nativegui/images/SafetyText_PT_Portuguese.png"
+  ],
+  "conflicts_with": [],
+  "depends_on": []
+}

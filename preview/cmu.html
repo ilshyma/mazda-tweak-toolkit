@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; }
+body { background: #000; color: #fff; font-family: sans-serif; width: 800px; height: 480px; overflow: hidden; }
+</style>
+</head>
+<body>
+
+<script>
+// Mock JCI framework — pretend we're in syssettings
+window.framework = { _currentAppUiaId: 'syssettings' };
+
+// Mock tweaksd API
+var MOCK_TWEAKS = {
+  tweaks: [
+    {
+      id: 'no-disclaimer',
+      name: 'Remove Disclaimer',
+      version: '1.0.0',
+      description: 'Removes the safety disclaimer dialog on startup',
+      author: 'ilshyma',
+      installed: true,
+      installed_version: '1.0.0',
+      update_available: false,
+      requires_reboot: true,
+      has_source: true,
+      setup: true
+    },
+    {
+      id: 'touch-while-moving',
+      name: 'Touchscreen While Moving',
+      version: '1.3.0',
+      description: 'Enables touchscreen input at any speed — removes speed restriction lock',
+      author: 'ilshyma',
+      installed: true,
+      installed_version: '1.2.0',
+      update_available: true,
+      requires_reboot: true,
+      has_source: true,
+      setup: true
+    },
+    {
+      id: 'hud-eu-region',
+      name: 'HUD EU Region Unlock',
+      version: '1.0.0',
+      description: 'Enables HUD settings menu for EU-market vehicles (normally hidden)',
+      author: 'ilshyma',
+      installed: true,
+      installed_version: '1.0.0',
+      update_available: false,
+      requires_reboot: true,
+      has_source: true,
+      setup: true
+    },
+    {
+      id: 'hud-carplay-nav',
+      name: 'CarPlay + AA HUD Navigation',
+      version: '2.4.3',
+      description: 'Turn-by-turn navigation from CarPlay and Android Auto on the windshield HUD with km/h speed-limit fix',
+      author: 'ilshyma',
+      installed: false,
+      installed_version: '',
+      update_available: false,
+      requires_reboot: true,
+      has_source: true,
+      setup: true
+    },
+    {
+      id: 'no-camera-warning',
+      name: 'Camera Safety Warning Removal',
+      version: '1.0.0',
+      description: 'Replaces SafetyText overlays with transparent PNGs — removes warning text from backup camera view',
+      author: 'ilshyma',
+      installed: false,
+      installed_version: '',
+      update_available: false,
+      requires_reboot: false,
+      has_source: true,
+      setup: false
+    }
+  ],
+  firmware: '74.00.324',
+  count: 5
+};
+
+// Intercept XHR to mock tweaksd
+(function() {
+  var OrigXHR = XMLHttpRequest;
+  function MockXHR() {
+    var real = new OrigXHR();
+    var self = this;
+    self._url = '';
+    self._method = '';
+    self.readyState = 0;
+    self.status = 0;
+    self.responseText = '';
+    self.onreadystatechange = null;
+    self.onerror = null;
+
+    self.open = function(method, url) {
+      self._method = method;
+      self._url = url;
+    };
+
+    self.send = function() {
+      var url = self._url.replace('http://127.0.0.1:8035', '');
+      var resp = null;
+
+      if (url === '/api/version') {
+        resp = { version: '1.0.0', uptime: 12345 };
+      } else if (url === '/api/usb/scan') {
+        resp = { usb_mounted: true, path: '/tmp/mnt/sdb1', tweaks_dir: '/tmp/mnt/sdb1/tweaks-manager/tweaks' };
+      } else if (url === '/api/backups/export') {
+        resp = { ok: true };
+      } else if (url === '/api/log/export') {
+        resp = { ok: true };
+      } else if (url === '/api/dump/status') {
+        resp = { exists: true, path: '/tmp/mnt/sdb1/tweaks-manager/dump' };
+      } else if (url === '/api/tweaks/list') {
+        resp = MOCK_TWEAKS;
+      } else if (url.indexOf('/api/tweaks/setup/') === 0) {
+        var sid = url.split('/').pop();
+        for (var s = 0; s < MOCK_TWEAKS.tweaks.length; s++) {
+          if (MOCK_TWEAKS.tweaks[s].id === sid) {
+            MOCK_TWEAKS.tweaks[s].setup = true;
+          }
+        }
+        resp = { ok: true };
+      } else if (url.indexOf('/api/tweaks/install/') === 0) {
+        var id = url.split('/').pop();
+        for (var i = 0; i < MOCK_TWEAKS.tweaks.length; i++) {
+          if (MOCK_TWEAKS.tweaks[i].id === id) {
+            MOCK_TWEAKS.tweaks[i].installed = true;
+            MOCK_TWEAKS.tweaks[i].installed_version = MOCK_TWEAKS.tweaks[i].version;
+          }
+        }
+        resp = { ok: true, reboot: true };
+      } else if (url.indexOf('/api/tweaks/update/') === 0) {
+        var upid = url.split('/').pop();
+        for (var k = 0; k < MOCK_TWEAKS.tweaks.length; k++) {
+          if (MOCK_TWEAKS.tweaks[k].id === upid) {
+            MOCK_TWEAKS.tweaks[k].installed_version = MOCK_TWEAKS.tweaks[k].version;
+            MOCK_TWEAKS.tweaks[k].update_available = false;
+          }
+        }
+        resp = { ok: true, reboot: true };
+      } else if (url.indexOf('/api/tweaks/uninstall/') === 0) {
+        var uid = url.split('/').pop();
+        for (var j = 0; j < MOCK_TWEAKS.tweaks.length; j++) {
+          if (MOCK_TWEAKS.tweaks[j].id === uid) {
+            MOCK_TWEAKS.tweaks[j].installed = false;
+            MOCK_TWEAKS.tweaks[j].installed_version = '';
+          }
+        }
+        resp = { ok: true, reboot: true };
+      } else if (url === '/api/system/reboot') {
+        resp = { ok: true };
+      }
+
+      setTimeout(function() {
+        self.readyState = 4;
+        self.status = resp ? 200 : 404;
+        self.responseText = resp ? JSON.stringify(resp) : '';
+        if (self.onreadystatechange) self.onreadystatechange();
+      }, url.indexOf('export') > -1 ? 300 : 100);
+    };
+
+    self.abort = function() {};
+  }
+  window.XMLHttpRequest = MockXHR;
+})();
+</script>
+
+<script src="tweaks-menu.js"></script>
+
+</body>
+</html>

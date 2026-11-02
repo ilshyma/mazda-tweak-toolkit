@@ -1,0 +1,16 @@
+{
+  "id": "touch-while-moving",
+  "name": "Touchscreen While Moving",
+  "version": "1.0.0",
+  "description": "Enables touchscreen input at any speed",
+  "author": "Tweaks Manager",
+  "min_firmware": "74.00.324",
+  "max_firmware": "74.00.324A",
+  "requires_reboot": true,
+  "regions": ["EU", "NA"],
+  "modifies": [
+    "/jci/gui/common/js/Common.js"
+  ],
+  "conflicts_with": [],
+  "depends_on": []
+}

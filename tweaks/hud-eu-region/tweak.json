@@ -1,0 +1,16 @@
+{
+  "id": "hud-eu-region",
+  "name": "HUD EU Region Unlock",
+  "version": "2.0.0",
+  "description": "Unlocks hidden HUD settings for EU: adds Display Information menu to standard HUD tab, Street Info and extended Navigation modes",
+  "author": "Tweaks Manager",
+  "min_firmware": "74.00.324",
+  "max_firmware": "74.00.324A",
+  "requires_reboot": true,
+  "regions": ["EU"],
+  "modifies": [
+    "/jci/gui/apps/vehsettings/js/vehsettingsApp.js"
+  ],
+  "conflicts_with": [],
+  "depends_on": []
+}

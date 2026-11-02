@@ -1,0 +1,16 @@
+{
+  "id": "ssh-access",
+  "name": "SSH Access",
+  "version": "1.0.0",
+  "description": "Enables SSH daemon with persistent autostart. Connect: ssh root@192.168.53.1 password: jci",
+  "author": "MZD-AIO community",
+  "min_firmware": "59.00.502",
+  "max_firmware": "74.00.324A",
+  "requires_reboot": true,
+  "regions": ["EU", "NA", "JP", "ADR"],
+  "modifies": [
+    "/jci/scripts/stage_wifi.sh"
+  ],
+  "conflicts_with": [],
+  "depends_on": []
+}
