@@ -34,7 +34,8 @@ for p in \
   fi
 done
 
-hdr "Prepare Tweaks Manager USB"
+VERSION=$(cat "$DIR/VERSION" 2>/dev/null || echo "?.?.?")
+hdr "Prepare Tweaks Manager USB v${VERSION}"
 
 # --- Check prerequisites ----------------------------------------------------
 if [ ! -f "$DIR/installer/tweaksd" ]; then
