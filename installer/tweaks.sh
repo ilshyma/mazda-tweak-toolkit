@@ -84,6 +84,12 @@ do_install() {
         log "[2/5] backup -> $BAK"
     fi
 
+    OPERA_INI_BAK="/data_persist/opera.ini.bak_tweaks"
+    if [ -f /jci/opera/opera_home/opera.ini ] && [ ! -f "$OPERA_INI_BAK" ]; then
+        cp -a /jci/opera/opera_home/opera.ini "$OPERA_INI_BAK"
+        log "[2/5] backed up opera.ini"
+    fi
+
     # ── Stale cleanup from inactive config ──────────────────────────
     for OTHER in /jci/sm/sm.conf /jci/sm/sm_WCP.conf; do
         [ "$OTHER" = "$CONF" ] && continue
@@ -141,6 +147,17 @@ STAGE2EOF
         mkdir -p "$USERJS_DIR"
         cp "$MENU_SRC" "$USERJS_DIR/tweaks-menu.js"
         log "[4/5] tweaks-menu.js deployed to $USERJS_DIR"
+
+        # Enable User JavaScript in opera.ini if disabled
+        OPERA_INI="/jci/opera/opera_home/opera.ini"
+        if [ -f "$OPERA_INI" ]; then
+            if grep -q 'User JavaScript=0' "$OPERA_INI"; then
+                sed -i 's/User JavaScript=0/User JavaScript=1/' "$OPERA_INI"
+                log "[4/5] enabled User JavaScript in opera.ini"
+            elif grep -q 'User JavaScript=1' "$OPERA_INI"; then
+                log "[4/5] User JavaScript already enabled"
+            fi
+        fi
     else
         log "[4/5] WARN: tweaks-menu.js not found on USB"
     fi
@@ -187,6 +204,11 @@ STAGE2EOF
     else
         log "tweaks-menu.js: MISSING"
     fi
+    if grep -q 'User JavaScript=1' /jci/opera/opera_home/opera.ini 2>/dev/null; then
+        log "User JavaScript: enabled"
+    else
+        log "User JavaScript: DISABLED (tweaks menu won't load)"
+    fi
 
     log "=== install complete ==="
 }
@@ -203,6 +225,16 @@ do_uninstall() {
     rm -f /jci/opera/opera_dir/userjs/tweaks-menu.js
     rm -f /jci/opera/opera_dir/userjs/tweaks-bootstrap.js
     rm -f /jci/opera/opera_dir/userjs/tweaksApp.js
+
+    OPERA_INI="/jci/opera/opera_home/opera.ini"
+    OPERA_INI_BAK="/data_persist/opera.ini.bak_tweaks"
+    if [ -f "$OPERA_INI_BAK" ]; then
+        cp -a "$OPERA_INI_BAK" "$OPERA_INI"
+        log "[2/4] opera.ini restored from backup"
+    elif [ -f "$OPERA_INI" ] && grep -q 'User JavaScript=1' "$OPERA_INI"; then
+        sed -i 's/User JavaScript=1/User JavaScript=0/' "$OPERA_INI"
+        log "[2/4] disabled User JavaScript in opera.ini (no backup)"
+    fi
     log "[2/4] userjs removed"
 
     log "[3/4] Removing boot autostart..."
