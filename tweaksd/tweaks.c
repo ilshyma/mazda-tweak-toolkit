@@ -276,7 +276,11 @@ int tweaks_backup_files(const tweak_t *tweak) {
         snprintf(dst, sizeof(dst), "%s/%s", backup_dir, basename);
 
         char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "cp '%s' '%s'", tweak->modifies[i], dst);
+        if (S_ISDIR(st.st_mode)) {
+            snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -a '%s' '%s'", dst, tweak->modifies[i], dst);
+        } else {
+            snprintf(cmd, sizeof(cmd), "cp -a '%s' '%s'", tweak->modifies[i], dst);
+        }
         if (system(cmd) != 0) return -1;
     }
     return 0;
@@ -304,7 +308,11 @@ int tweaks_restore_files(const char *id) {
         if (stat(src, &st) != 0) continue;
 
         char cmd[1024];
-        snprintf(cmd, sizeof(cmd), "cp '%s' '%s'", src, tweak.modifies[i]);
+        if (S_ISDIR(st.st_mode)) {
+            snprintf(cmd, sizeof(cmd), "cp -a '%s'/. '%s/'", src, tweak.modifies[i]);
+        } else {
+            snprintf(cmd, sizeof(cmd), "cp -a '%s' '%s'", src, tweak.modifies[i]);
+        }
         system(cmd);
     }
     return 0;
@@ -440,13 +448,11 @@ int tweaks_install(const char *id, const tweak_list_t *list, char *result, int r
     /* script may have left rootfs ro — re-mount for bookkeeping */
     system("mount -o remount,rw /");
 
-    /* copy tweak metadata to installed dir */
+    /* copy full tweak package to installed dir */
     char inst_dir[MAX_PATH];
     snprintf(inst_dir, sizeof(inst_dir), "%s/installed/%s", TWEAKS_DIR, id);
-    mkdir(inst_dir, 0755);
-
-    snprintf(cmd, sizeof(cmd), "cp '%s/tweak.json' '%s/tweak.json'",
-             script_dir, inst_dir);
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -a '%s' '%s'",
+             inst_dir, script_dir, inst_dir);
     system(cmd);
 
     system("mount -o remount,ro /");
@@ -672,9 +678,8 @@ int tweaks_update(const char *id, const tweak_list_t *list, char *result, int re
     system("mount -o remount,rw /");
 
     snprintf(inst_dir, sizeof(inst_dir), "%s/installed/%s", TWEAKS_DIR, id);
-    mkdir(inst_dir, 0755);
-    snprintf(cmd, sizeof(cmd), "cp '%s/tweak.json' '%s/tweak.json'",
-             tweak->source_path, inst_dir);
+    snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -a '%s' '%s'",
+             inst_dir, tweak->source_path, inst_dir);
     system(cmd);
 
     system("mount -o remount,ro /");
