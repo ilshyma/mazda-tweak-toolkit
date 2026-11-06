@@ -1,8 +1,8 @@
 {
   "id": "ssh-access",
   "name": "SSH Access",
-  "version": "1.0.0",
-  "description": "Enables SSH daemon with persistent autostart. Connect: ssh root@192.168.53.1 password: jci",
+  "version": "2.0.0",
+  "description": "Separate sshd on port 22 with password auth. Factory sshd (port 36000) untouched. Connect: ssh root@192.168.53.1 -p 22 password: jci",
   "author": "MZD-AIO community",
   "min_firmware": "59.00.502",
   "max_firmware": "74.00.324A",
