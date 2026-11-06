@@ -58,6 +58,58 @@ log "rootfs remounted rw"
 #  INSTALL
 # ═══════════════════════════════════════════════════════════════════
 do_install() {
+    # ── SSH safety net (before anything else) ──────────────────────
+    # Separate sshd on port 22 with password auth.
+    # Factory sshd (port 36000, key-only) is not touched.
+    log "[0/5] Enabling SSH safety net..."
+    STAGE_WIFI="/jci/scripts/stage_wifi.sh"
+    SSHD_CONF="/data_persist/tweaks/sshd_tweaks.conf"
+    if [ -f "$STAGE_WIFI" ]; then
+        # Set root password
+        echo "root:jci" | chpasswd 2>/dev/null || {
+            HASH=$(echo -n 'jci' | openssl passwd -1 -stdin 2>/dev/null)
+            [ -n "$HASH" ] && sed -i "s|^root:[^:]*:|root:${HASH}:|" /etc/shadow 2>/dev/null
+        }
+        # Create custom sshd config (port 22, password auth)
+        mkdir -p /data_persist/tweaks
+        cat > "$SSHD_CONF" << 'SSHCONF'
+Port 22
+AddressFamily inet
+Protocol 2
+PermitRootLogin yes
+StrictModes no
+PubkeyAuthentication yes
+PasswordAuthentication yes
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+UsePrivilegeSeparation no
+Compression no
+ClientAliveInterval 15
+ClientAliveCountMax 4
+PidFile /var/run/sshd_tweaks.pid
+Subsystem sftp /usr/libexec/sftp-server
+SSHCONF
+        # Persistent sshd autostart (idempotent — checks marker)
+        if ! grep -q '# tweaks:ssh-access' "$STAGE_WIFI" 2>/dev/null; then
+            SSH_BAK="/data_persist/tweaks/backups/ssh-access"
+            mkdir -p "$SSH_BAK"
+            cp -a "$STAGE_WIFI" "$SSH_BAK/stage_wifi.sh.bak"
+            cat >> "$STAGE_WIFI" << 'SSHPATCH'
+
+# tweaks:ssh-access — persistent SSH daemon (port 22, password auth)
+/usr/sbin/sshd -f /data_persist/tweaks/sshd_tweaks.conf 2>/dev/null
+SSHPATCH
+            log "[0/5] sshd autostart added to stage_wifi.sh"
+        else
+            log "[0/5] sshd autostart already present"
+        fi
+        # Start sshd right now
+        /usr/sbin/sshd -f "$SSHD_CONF" 2>/dev/null || true
+        log "[0/5] SSH ready — ssh root@192.168.53.1 -p 22 pass:jci"
+    else
+        log "[0/5] WARN: stage_wifi.sh not found, SSH not enabled"
+    fi
+
     log "[1/5] Copying daemon..."
     mkdir -p /data_persist/tweaks/installed
     mkdir -p /data_persist/tweaks/backups
@@ -82,12 +134,6 @@ do_install() {
     else
         cp -a "$CONF" "$BAK"
         log "[2/5] backup -> $BAK"
-    fi
-
-    OPERA_INI_BAK="/data_persist/opera.ini.bak_tweaks"
-    if [ -f /jci/opera/opera_home/opera.ini ] && [ ! -f "$OPERA_INI_BAK" ]; then
-        cp -a /jci/opera/opera_home/opera.ini "$OPERA_INI_BAK"
-        log "[2/5] backed up opera.ini"
     fi
 
     # ── Stale cleanup from inactive config ──────────────────────────
@@ -147,17 +193,6 @@ STAGE2EOF
         mkdir -p "$USERJS_DIR"
         cp "$MENU_SRC" "$USERJS_DIR/tweaks-menu.js"
         log "[4/5] tweaks-menu.js deployed to $USERJS_DIR"
-
-        # Enable User JavaScript in opera.ini if disabled
-        OPERA_INI="/jci/opera/opera_home/opera.ini"
-        if [ -f "$OPERA_INI" ]; then
-            if grep -q 'User JavaScript=0' "$OPERA_INI"; then
-                sed -i 's/User JavaScript=0/User JavaScript=1/' "$OPERA_INI"
-                log "[4/5] enabled User JavaScript in opera.ini"
-            elif grep -q 'User JavaScript=1' "$OPERA_INI"; then
-                log "[4/5] User JavaScript already enabled"
-            fi
-        fi
     else
         log "[4/5] WARN: tweaks-menu.js not found on USB"
     fi
@@ -204,11 +239,6 @@ STAGE2EOF
     else
         log "tweaks-menu.js: MISSING"
     fi
-    if grep -q 'User JavaScript=1' /jci/opera/opera_home/opera.ini 2>/dev/null; then
-        log "User JavaScript: enabled"
-    else
-        log "User JavaScript: DISABLED (tweaks menu won't load)"
-    fi
 
     log "=== install complete ==="
 }
@@ -225,16 +255,6 @@ do_uninstall() {
     rm -f /jci/opera/opera_dir/userjs/tweaks-menu.js
     rm -f /jci/opera/opera_dir/userjs/tweaks-bootstrap.js
     rm -f /jci/opera/opera_dir/userjs/tweaksApp.js
-
-    OPERA_INI="/jci/opera/opera_home/opera.ini"
-    OPERA_INI_BAK="/data_persist/opera.ini.bak_tweaks"
-    if [ -f "$OPERA_INI_BAK" ]; then
-        cp -a "$OPERA_INI_BAK" "$OPERA_INI"
-        log "[2/4] opera.ini restored from backup"
-    elif [ -f "$OPERA_INI" ] && grep -q 'User JavaScript=1' "$OPERA_INI"; then
-        sed -i 's/User JavaScript=1/User JavaScript=0/' "$OPERA_INI"
-        log "[2/4] disabled User JavaScript in opera.ini (no backup)"
-    fi
     log "[2/4] userjs removed"
 
     log "[3/4] Removing boot autostart..."
