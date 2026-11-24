@@ -55,8 +55,9 @@ while [ $ELAPSED -lt $TIMEOUT ]; do
         rm -f "$ACTION_FILE"
         if [ -n "$ACTION" ] && [ "$ACTION" != "close" ]; then
             sh "$USB/tweaks-manager/installer/tweaks.sh" "$USB" "$ACTION"
-            # Signal completion
+            # Signal completion — daemon polls every 1s, give it time to respond
             echo "done" > /tmp/tweaks_result
+            sleep 3
         fi
         break
     fi

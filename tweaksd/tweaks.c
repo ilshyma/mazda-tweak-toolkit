@@ -321,6 +321,7 @@ int tweaks_backup_files(const tweak_t *tweak) {
             glob_t g;
             if (glob(tweak->modifies[i], GLOB_NOSORT, NULL, &g) == 0) {
                 for (size_t j = 0; j < g.gl_pathc; j++) {
+                    if (strchr(g.gl_pathv[j], '\'')) continue;
                     if (backup_one_file(g.gl_pathv[j], backup_dir) != 0) {
                         globfree(&g);
                         return -1;
@@ -378,6 +379,7 @@ int tweaks_restore_files(const char *id) {
             glob_t g;
             if (glob(tweak.modifies[i], GLOB_NOSORT, NULL, &g) == 0) {
                 for (size_t j = 0; j < g.gl_pathc; j++) {
+                    if (strchr(g.gl_pathv[j], '\'')) continue;
                     if (restore_one_file(g.gl_pathv[j], backup_dir, id) != 0)
                         errors++;
                 }
@@ -862,10 +864,14 @@ int tweaks_check_conflicts(const char *id, const tweak_list_t *list,
         for (int i = 0; i < list->count; i++) {
             if (list->tweaks[i].installed &&
                 strcmp(list->tweaks[i].id, tweak->conflicts_with[c]) == 0) {
-                if (clen > 1) conflicts[clen++] = ',';
-                clen += snprintf(conflicts + clen, sizeof(conflicts) - clen,
+                if (clen > 1 && clen < (int)sizeof(conflicts) - 1)
+                    conflicts[clen++] = ',';
+                int written = snprintf(conflicts + clen,
+                    sizeof(conflicts) - clen,
                     "{\"type\":\"declared\",\"tweak\":\"%s\"}",
                     list->tweaks[i].id);
+                if (written > 0 && clen + written < (int)sizeof(conflicts))
+                    clen += written;
             }
         }
     }
@@ -877,16 +883,22 @@ int tweaks_check_conflicts(const char *id, const tweak_list_t *list,
             if (strcmp(list->tweaks[i].id, id) == 0) continue;
             for (int om = 0; om < list->tweaks[i].modifies_count; om++) {
                 if (strcmp(tweak->modifies[m], list->tweaks[i].modifies[om]) == 0) {
-                    if (clen > 1) conflicts[clen++] = ',';
-                    clen += snprintf(conflicts + clen, sizeof(conflicts) - clen,
+                    if (clen > 1 && clen < (int)sizeof(conflicts) - 1)
+                        conflicts[clen++] = ',';
+                    int written = snprintf(conflicts + clen,
+                        sizeof(conflicts) - clen,
                         "{\"type\":\"file\",\"tweak\":\"%s\",\"file\":\"%s\"}",
                         list->tweaks[i].id, tweak->modifies[m]);
+                    if (written > 0 && clen + written < (int)sizeof(conflicts))
+                        clen += written;
                 }
             }
         }
     }
 
-    strcat(conflicts, "]");
+    if (clen < (int)sizeof(conflicts) - 1)
+        conflicts[clen++] = ']';
+    conflicts[clen] = '\0';
     snprintf(result, resultlen, "{\"conflicts\":%s}", conflicts);
     return 0;
 }

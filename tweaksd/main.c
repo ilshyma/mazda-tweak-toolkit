@@ -314,9 +314,10 @@ static void handle_usb_scan(http_request_t *req) {
     memset(usb_list, 0, sizeof(*usb_list));
     if (has_tweaks) tweaks_scan_usb(usb_list, usb_dir);
 
-    char *json = malloc(4096);
+    int json_cap = 16384;
+    char *json = malloc(json_cap);
     if (!json) { free(usb_list); http_respond_error(req, 500, "out of memory"); return; }
-    int pos = snprintf(json, 4096,
+    int pos = snprintf(json, json_cap,
         "{\"usb_mounted\":%s,\"mount_count\":%d,\"tweaks_dir\":%s,\"new_tweaks\":[",
         mounts.count > 0 ? "true" : "false",
         mounts.count,
@@ -336,9 +337,10 @@ static void handle_usb_scan(http_request_t *req) {
                 break;
             }
         }
+        if (pos >= json_cap - 256) break;
         if (!first) json[pos++] = ',';
         first = 0;
-        pos += snprintf(json + pos, 4096 - pos,
+        pos += snprintf(json + pos, json_cap - pos,
             "{\"id\":\"%s\",\"name\":\"%s\",\"version\":\"%s\","
             "\"installed\":%s,\"update\":%s}",
             usb_list->tweaks[u].id, usb_list->tweaks[u].name,
@@ -347,7 +349,7 @@ static void handle_usb_scan(http_request_t *req) {
             update ? "true" : "false");
     }
 
-    snprintf(json + pos, 4096 - pos, "]}");
+    snprintf(json + pos, json_cap - pos, "]}");
     http_respond_json(req, 200, json);
     free(json);
     free(usb_list);
@@ -434,12 +436,20 @@ static void handle_manager_status(http_request_t *req) {
         }
     }
 
+    char escaped_ver[128];
+    int j = 0;
+    for (int i = 0; manager_ver[i] && j < (int)sizeof(escaped_ver) - 2; i++) {
+        if (manager_ver[i] == '"' || manager_ver[i] == '\\') escaped_ver[j++] = '\\';
+        escaped_ver[j++] = manager_ver[i];
+    }
+    escaped_ver[j] = '\0';
+
     char json[512];
     snprintf(json, sizeof(json),
         "{\"installed\":%s,\"version\":\"%s\",\"manager_version\":\"%s\"}",
         installed ? "true" : "false",
         VERSION,
-        manager_ver);
+        escaped_ver);
     http_respond_json(req, 200, json);
 }
 

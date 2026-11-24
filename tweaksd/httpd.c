@@ -50,7 +50,13 @@ int httpd_init(void) {
 }
 
 void httpd_set_static_dir(const char *dir) {
-    snprintf(static_dir, sizeof(static_dir), "%s", dir);
+    /* Resolve symlinks so serve_static's realpath check can match */
+    char resolved[256];
+    if (realpath(dir, resolved)) {
+        snprintf(static_dir, sizeof(static_dir), "%s", resolved);
+    } else {
+        snprintf(static_dir, sizeof(static_dir), "%s", dir);
+    }
     int len = strlen(static_dir);
     if (len > 0 && static_dir[len - 1] == '/')
         static_dir[len - 1] = '\0';

@@ -217,8 +217,10 @@ SSHPATCH
         if [ ! -f "$STAGE2_BAK" ]; then
             cp -a "$STAGE2" "$STAGE2_BAK"
         fi
-        awk '/# Tweaks Manager/{skip=1;next} skip && /^\) &/{skip=0;next} skip{next} /tweaksd/{next} {print}' \
+        awk '/# Tweaks Manager/{skip=1;next} skip && /^\) &/{skip=0;next} skip{next} {print}' \
             "$STAGE2" > "$STAGE2.tmp" && mv "$STAGE2.tmp" "$STAGE2"
+        # Remove any remaining standalone tweaksd launch lines (outside block)
+        sed -i '/^[[:space:]]*\/data_persist\/tweaks\/tweaksd/d' "$STAGE2"
         log "[3/5] removed legacy tweaksd from stage_2.sh"
     else
         log "[3/5] no boot autostart found, clean"
@@ -354,8 +356,10 @@ do_uninstall() {
         log "[3/5] tweaksd block removed from stage_2.sh"
     # Fallback: legacy unmarked block — awk removes whole subshell safely
     elif grep -q "tweaksd" "$STAGE2" 2>/dev/null; then
-        awk '/# Tweaks Manager/{skip=1;next} skip && /^\) &/{skip=0;next} skip{next} /tweaksd/{next} {print}' \
+        awk '/# Tweaks Manager/{skip=1;next} skip && /^\) &/{skip=0;next} skip{next} {print}' \
             "$STAGE2" > "$STAGE2.tmp" && mv "$STAGE2.tmp" "$STAGE2"
+        # Remove any remaining standalone tweaksd launch lines (outside block)
+        sed -i '/^[[:space:]]*\/data_persist\/tweaks\/tweaksd/d' "$STAGE2"
         log "[3/5] removed tweaksd from stage_2.sh (legacy)"
     else
         log "[3/5] tweaksd not found in stage_2.sh, nothing to remove"
@@ -395,7 +399,12 @@ do_uninstall() {
         patch_remove_block "tweaks:ssh-safety" "sshd autostart in stage_wifi.sh"
         patch_commit
         log "[4/5] SSH block removed from stage_wifi.sh (marker-based)"
-    # Fallback: old-style marker without begin/end (dangerous: '/marker/,$d' can eat EOF)
+    # Inline fallback: new markers present but PATCH_LIB unavailable (USB removed)
+    elif grep -q '# tweaks:ssh-safety:begin' "$STAGE_WIFI" 2>/dev/null; then
+        awk '/# tweaks:ssh-safety:begin/{skip=1;next} /# tweaks:ssh-safety:end/{skip=0;next} !skip' \
+            "$STAGE_WIFI" > "$STAGE_WIFI.tmp" && mv "$STAGE_WIFI.tmp" "$STAGE_WIFI"
+        log "[4/5] SSH block removed from stage_wifi.sh (inline fallback)"
+    # Fallback: old-style marker without begin/end
     elif grep -q '# tweaks:ssh-access' "$STAGE_WIFI" 2>/dev/null; then
         # Only delete the marker line and the sshd line, NOT everything to EOF
         sed -i '/# tweaks:ssh-access/d' "$STAGE_WIFI" 2>/dev/null

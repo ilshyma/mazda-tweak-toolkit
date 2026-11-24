@@ -717,6 +717,7 @@
                         setTimeout(function() {
                             actionBusy = false;
                             dismissModal();
+                            loadData();
                         }, 15000);
                     } else {
                         actionBusy = false;
