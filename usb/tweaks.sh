@@ -284,6 +284,33 @@ show_manage_menu() {
     fi
 }
 
+# ── Start temp tweaksd server ───────────────────────────────────────
+TWEAKSD_PID=""
+start_temp_tweaksd() {
+    TWEAKSD_USB="$MYDIR/tweaks-manager/installer/tweaksd"
+    TWEAKSD_INST="/data_persist/tweaks/tweaksd"
+    DAEMON=""
+    [ -x "$TWEAKSD_USB" ] && DAEMON="$TWEAKSD_USB"
+    [ -z "$DAEMON" ] && [ -x "$TWEAKSD_INST" ] && DAEMON="$TWEAKSD_INST"
+    if [ -n "$DAEMON" ]; then
+        killall tweaksd 2>/dev/null
+        sleep 1
+        "$DAEMON" -f </dev/null >/dev/null 2>&1 &
+        TWEAKSD_PID=$!
+        sleep 1
+        if kill -0 $TWEAKSD_PID 2>/dev/null; then
+            log "tweaksd temp server started (PID $TWEAKSD_PID) from $DAEMON"
+            panel "tweaksd running"
+        else
+            log "WARN: tweaksd failed to start"
+            TWEAKSD_PID=""
+        fi
+    else
+        log "WARN: no tweaksd binary found, browser UI unavailable"
+    fi
+}
+start_temp_tweaksd
+
 # ── Menu ────────────────────────────────────────────────────────────
 if [ -f /data_persist/tweaks/tweaksd_installed ]; then
     INST_VER=$(head -2 /data_persist/tweaks/tweaksd_installed 2>/dev/null | tail -1)

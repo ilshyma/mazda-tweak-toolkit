@@ -208,20 +208,31 @@ prepare_usb() {
 
   # ── Copy files ──
 
-  info "1/5 · trampoline check"
-  if [ -f "$USB/t" ]; then
-    ok "  trampoline 't' present"
-  else
-    warn "  trampoline 't' not found — copy from hud-toolkit if needed"
-  fi
-
-  info "2/5 · installer entry point"
   export COPYFILE_DISABLE=1
-  cp "$DIR/installer/tweaks.sh" "$USB/tweaks.sh" || { err "copy failed"; return 1; }
-  ok "  tweaks.sh copied"
 
-  info "3/5 · installer files"
+  info "1/6 · trampoline"
+  cp "$DIR/usb/t" "$USB/t" || { err "copy t failed"; return 1; }
+  chmod 755 "$USB/t"
+  ok "  trampoline 't'"
+
+  info "2/6 · runner"
+  cp "$DIR/usb/tweaks.sh" "$USB/tweaks.sh" || { err "copy tweaks.sh failed"; return 1; }
+  chmod 755 "$USB/tweaks.sh"
+  ok "  runner 'tweaks.sh'"
+
+  info "3/6 · trigger files"
+  for f in dataRetrieval_config.txt jci-autoupdate; do
+    if [ -f "$DIR/usb/$f" ]; then
+      cp "$DIR/usb/$f" "$USB/$f"
+      ok "  $f"
+    fi
+  done
+
+  info "4/6 · installer files"
   mkdir -p "$USB/tweaks-manager/installer"
+  cp "$DIR/installer/tweaks.sh" "$USB/tweaks-manager/installer/tweaks.sh" || { err "copy installer failed"; return 1; }
+  chmod 755 "$USB/tweaks-manager/installer/tweaks.sh"
+  ok "  installer tweaks.sh"
   cp "$DIR/tweaksd/tweaksd" "$USB/tweaks-manager/installer/tweaksd" || { err "copy failed"; return 1; }
   chmod 755 "$USB/tweaks-manager/installer/tweaksd"
   ok "  tweaksd binary: $(wc -c < "$USB/tweaks-manager/installer/tweaksd" | tr -d ' ') bytes"
@@ -232,12 +243,12 @@ prepare_usb() {
   cp "$DIR/VERSION" "$USB/tweaks-manager/VERSION" || { err "copy VERSION failed"; return 1; }
   ok "  VERSION $(cat "$DIR/VERSION" | tr -d '[:space:]')"
 
-  info "4/5 · Settings icon (userjs)"
+  info "5/6 · Settings icon (userjs)"
   mkdir -p "$USB/tweaks-manager/jci-app"
   cp "$DIR/jci-app/tweaks-menu.js" "$USB/tweaks-manager/jci-app/" || { err "copy failed"; return 1; }
   ok "  tweaks-menu.js"
 
-  info "5/5 · tweaks"
+  info "6/6 · tweaks"
   mkdir -p "$USB/tweaks-manager/tweaks"
   local tweak_count=0
   for tweak_dir in "$DIR/tweaks"/*/; do
@@ -251,9 +262,10 @@ prepare_usb() {
   ok "  $tweak_count tweaks copied"
 
   # Strip macOS junk
-  find "$USB/tweaks-manager" "$USB/tweaks.sh" \
+  find "$USB/tweaks-manager" \
     \( -name '._*' -o -name '.DS_Store' \) \
     -exec rm -rf {} + 2>/dev/null || true
+  rm -f "$USB/._t" "$USB/._tweaks.sh" 2>/dev/null
 
   sync
 
@@ -261,14 +273,17 @@ prepare_usb() {
   echo
   info "verifying..."
   local problems=0
-  for f in tweaks.sh tweaks-manager/installer/tweaksd \
+  for f in t tweaks.sh tweaks-manager/installer/tweaks.sh \
+           tweaks-manager/installer/tweaksd \
            tweaks-manager/jci-app/tweaks-menu.js \
            tweaks-manager/lib/patch.sh \
            tweaks-manager/VERSION; do
     if [ -f "$USB/$f" ]; then
       local src_md5 dst_md5
       case "$f" in
-        tweaks.sh)                               src_md5=$(md5 -q "$DIR/installer/tweaks.sh" 2>/dev/null) ;;
+        t)                                       src_md5=$(md5 -q "$DIR/usb/t" 2>/dev/null) ;;
+        tweaks.sh)                               src_md5=$(md5 -q "$DIR/usb/tweaks.sh" 2>/dev/null) ;;
+        tweaks-manager/installer/tweaks.sh)      src_md5=$(md5 -q "$DIR/installer/tweaks.sh" 2>/dev/null) ;;
         tweaks-manager/installer/tweaksd)        src_md5=$(md5 -q "$DIR/tweaksd/tweaksd" 2>/dev/null) ;;
         tweaks-manager/jci-app/tweaks-menu.js)   src_md5=$(md5 -q "$DIR/jci-app/tweaks-menu.js" 2>/dev/null) ;;
         tweaks-manager/lib/patch.sh)             src_md5=$(md5 -q "$DIR/lib/patch.sh" 2>/dev/null) ;;
@@ -299,7 +314,7 @@ prepare_usb() {
     info "structure:"
     find "$USB/tweaks-manager" -type f 2>/dev/null | sed "s|$USB/||" | sort | head -30 | sed 's/^/  /'
     echo
-    info "install: insert USB → CMU detects .up → trampoline → tweaks.sh"
+    info "install: insert USB → CMU detects .up → t → tweaks.sh → tweaksd temp server"
   else
     err "$problems problem(s) — check USB and try again"
   fi
