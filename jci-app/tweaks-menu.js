@@ -151,8 +151,9 @@
             width: '48px', height: '48px', marginTop: '12px',
             background: BTN_BG, borderRadius: '12px',
             textAlign: 'center', lineHeight: '48px',
-            fontSize: '24px', color: CYAN, marginRight: '14px'
-        }, '⚙');
+            fontSize: '20px', color: CYAN, marginRight: '14px',
+            fontWeight: 'bold'
+        }, 'TM');
         hdr.appendChild(icon);
 
         var title = mkEl('span', {
@@ -188,8 +189,6 @@
             border: '1px solid ' + CARD_BD
         });
         close.setAttribute('data-action', '1');
-        var closeX = mkEl('span', { color: TXT3, marginRight: '8px' }, '✕');
-        close.appendChild(closeX);
         close.appendChild(document.createTextNode('Close'));
         close.onclick = function() { overlay.style.display = 'none'; };
         hdr.appendChild(close);
@@ -217,16 +216,16 @@
             padding: '12px 24px', zIndex: '2'
         });
 
-        var rb = mkFooterBtn('↻  Refresh', BTN_BG, TXT2, function() {
+        var rb = mkFooterBtn('Refresh', BTN_BG, TXT2, function() {
             loadData();
         });
         ftr.appendChild(rb);
 
-        var sb = mkFooterBtn('•  Scan USB', '#0891b2', '#fff', function() {
+        var sb = mkFooterBtn('Scan USB', '#0891b2', '#fff', function() {
             sb.firstChild.nodeValue = 'Scanning...';
             api('GET', '/api/usb/scan', function(s, d) {
                 cachedUsb = d;
-                sb.firstChild.nodeValue = '•  Scan USB';
+                sb.firstChild.nodeValue = 'Scan USB';
                 updateHeaderStatus();
                 loadData();
             });
@@ -363,8 +362,8 @@
             background: BTN_BG, borderRadius: '20px',
             textAlign: 'center', lineHeight: '80px',
             fontSize: '36px', color: YELLOW, marginBottom: '20px',
-            border: '1px solid ' + CARD_BD
-        }, '⚠');
+            border: '1px solid ' + CARD_BD, fontWeight: 'bold'
+        }, 'USB');
         box.appendChild(iconWrap);
 
         box.appendChild(mkEl('div', {
@@ -402,7 +401,7 @@
         var c = document.getElementById('tweaks-content');
         if (bar) {
             bar.style.display = 'block';
-            bar.textContent = '↻  Syncing backup + logs to USB...';
+            bar.textContent = 'Syncing backup + logs to USB...';
             bar.style.color = CYAN;
         }
         if (c) c.style.top = '112px';
@@ -414,13 +413,13 @@
 
                 if (bar) {
                     if (bOk && lOk) {
-                        bar.textContent = '✓  Backup + logs synced to USB';
+                        bar.textContent = 'OK -- Backup + logs synced to USB';
                         bar.style.color = GREEN;
                     } else if (bOk) {
-                        bar.textContent = '✓  Backup synced  |  ✗ log export failed';
+                        bar.textContent = 'OK -- Backup synced | FAIL -- log export';
                         bar.style.color = YELLOW;
                     } else {
-                        bar.textContent = '✗  Sync failed — check USB';
+                        bar.textContent = 'FAIL -- Sync failed, check USB';
                         bar.style.color = RED;
                     }
                 }
@@ -452,8 +451,6 @@
             }
         }
 
-        var dot = mkEl('span', { color: GREEN }, '● ');
-        el.appendChild(dot);
         el.appendChild(document.createTextNode(count + ' installed'));
 
         var usbDot = mkEl('span', {
@@ -461,8 +458,8 @@
             color: (cachedUsb && cachedUsb.usb_mounted) ? CYAN : TXT3
         });
         usbDot.textContent = (cachedUsb && cachedUsb.usb_mounted)
-            ? '●  USB Connected'
-            : '○  No USB';
+            ? '[ USB ]'
+            : 'No USB';
         el.appendChild(usbDot);
     }
 
@@ -552,7 +549,7 @@
             dbtn.style.background = BTN_BG2;
             api('POST', '/api/dump/create', function(s, res) {
                 if (res && res.ok) {
-                    dbtn.textContent = '✓ Done';
+                    dbtn.textContent = 'Done!';
                     dbtn.style.background = GREEN;
                     setTimeout(function() { loadData(); }, 1000);
                 } else {
@@ -645,10 +642,10 @@
         var badges = mkEl('div', { fontSize: '0' });
 
         if (t.installed) {
-            badges.appendChild(makeBadge('●  INSTALLED', GREEN));
+            badges.appendChild(makeBadge('INSTALLED', GREEN));
 
             if (t.update_available) {
-                badges.appendChild(makeBadge('↑  UPDATE v' + t.version, BLUE));
+                badges.appendChild(makeBadge('UPDATE v' + t.version, BLUE));
             }
         } else {
             if (t.has_source) {
@@ -713,7 +710,7 @@
             api('POST', '/api/tweaks/' + action + '/' + tweak.id, function(s, res) {
                 if (res && res.ok) {
                     if (res.reboot) {
-                        updateModal('⏻', 'Rebooting...', 'System will restart in a few seconds', CYAN, 0);
+                        updateModal('>>>', 'Rebooting...', 'System will restart in a few seconds', CYAN, 0);
                         setTimeout(function() {
                             actionBusy = false;
                             dismissModal();
@@ -721,12 +718,12 @@
                         }, 15000);
                     } else {
                         actionBusy = false;
-                        updateModal('✓', 'Done', '', GREEN, 1500);
+                        updateModal('OK', 'Done', '', GREEN, 1500);
                     }
                 } else {
                     actionBusy = false;
                     var err = (res && res.error) || 'Operation failed';
-                    updateModal('✗', 'Failed', err, RED, 3000);
+                    updateModal('ERR', 'Failed', err, RED, 3000);
                 }
             });
         };
@@ -753,8 +750,8 @@
         });
 
         var spinner = mkEl('div', {
-            fontSize: '36px', color: CYAN, marginBottom: '18px'
-        }, '↻');
+            fontSize: '28px', color: CYAN, marginBottom: '18px', fontWeight: 'bold'
+        }, '...');
         spinner.id = 'modal-icon';
         box.appendChild(spinner);
 
