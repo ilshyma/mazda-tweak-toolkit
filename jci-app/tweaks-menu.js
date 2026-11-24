@@ -14,6 +14,7 @@
     var overlay = null;
     var btn = null;
     var visible = false;
+    var currentFilter = 'all';
     var cachedTweaks = null;
     var cachedVer = null;
     var cachedUsb = null;
@@ -73,13 +74,8 @@
         } catch(e) { cb(0, null); }
     }
 
-    /* ── Touch scrolling with inertia (CMU has no native scroll) ──── */
+    /* ── Touch scrolling (CMU has no real scroll) ──────────────────── */
     var scrollState = null;
-    var inertiaTimer = null;
-
-    function stopInertia() {
-        if (inertiaTimer) { clearInterval(inertiaTimer); inertiaTimer = null; }
-    }
 
     function enableScroll(container) {
         container.onmousedown = function(e) {
@@ -88,36 +84,20 @@
                 if (t.getAttribute && t.getAttribute('data-action')) return;
                 t = t.parentNode;
             }
-            stopInertia();
-            scrollState = { el: container, startY: e.clientY, startScroll: container.scrollTop, lastT: 0, prevY: e.clientY, velocity: 0 };
+            scrollState = { el: container, startY: e.clientY, startScroll: container.scrollTop, lastT: 0 };
         };
         container.onmousemove = function(e) {
             if (!scrollState) return;
             var now = (new Date()).getTime();
             if (now - scrollState.lastT < 32) return;
-            var dt = now - scrollState.lastT;
             scrollState.lastT = now;
-            var dy = (scrollState.startY - e.clientY) * 1.5;
+            var dy = scrollState.startY - e.clientY;
             scrollState.el.scrollTop = scrollState.startScroll + dy;
-            scrollState.velocity = (scrollState.prevY - e.clientY) / (dt || 1);
-            scrollState.prevY = e.clientY;
         };
-        function endDrag() {
-            if (!scrollState) return;
-            var v = scrollState.velocity * 1.5 * 16;
-            var el = scrollState.el;
-            scrollState = null;
-            if (Math.abs(v) < 2) return;
-            inertiaTimer = setInterval(function() {
-                v *= 0.92;
-                if (Math.abs(v) < 1) { stopInertia(); return; }
-                el.scrollTop += v;
-            }, 32);
-        }
-        container.onmouseup = endDrag;
+        container.onmouseup = function() { scrollState = null; };
         container.onmouseout = function(e) {
             if (scrollState && (!e.relatedTarget || !container.contains(e.relatedTarget)))
-                endDrag();
+                scrollState = null;
         };
     }
 
@@ -129,30 +109,15 @@
         btn = document.createElement('div');
         btn.id = 'tweaks-settings-btn';
         setS(btn, {
-            position: 'fixed', bottom: '12px', left: '12px',
-            width: '48px', height: '48px',
-            padding: '0', textAlign: 'center',
-            background: '#b91c1c', borderRadius: '50%',
-            zIndex: '99998', cursor: 'pointer',
-            display: 'none',
-            border: '1px solid #ef4444'
+            position: 'fixed', bottom: '12px', right: '12px',
+            padding: '12px 28px',
+            background: '#0891b2', color: '#fff', borderRadius: '9px',
+            zIndex: '99998', fontSize: '20px', fontWeight: 'bold',
+            fontFamily: 'sans-serif', cursor: 'pointer',
+            display: 'none', letterSpacing: '2px',
+            border: '1px solid ' + CYAN
         });
-        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="38" height="38" style="margin-top:5px">'
-            + '<rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="#fff" stroke-width="1.8"/>'
-            + '<text x="12" y="15" text-anchor="middle" fill="#fff" font-size="8" font-weight="bold" font-family="sans-serif">T</text>'
-            + '<line x1="8" y1="3" x2="8" y2="5" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="12" y1="3" x2="12" y2="5" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="16" y1="3" x2="16" y2="5" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="8" y1="19" x2="8" y2="21" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="12" y1="19" x2="12" y2="21" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="16" y1="19" x2="16" y2="21" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="3" y1="8" x2="5" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="3" y1="12" x2="5" y2="12" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="3" y1="16" x2="5" y2="16" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="19" y1="8" x2="21" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="19" y1="12" x2="21" y2="12" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="19" y1="16" x2="21" y2="16" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '</svg>';
+        btn.textContent = 'TWEAKS';
         btn.onclick = function() { showUI(); };
         document.body.appendChild(btn);
         dbg('button created');
@@ -181,6 +146,15 @@
             padding: '0 24px', zIndex: '2'
         });
 
+        var icon = mkEl('div', {
+            display: 'inline-block', verticalAlign: 'middle',
+            width: '48px', height: '48px', marginTop: '12px',
+            background: BTN_BG, borderRadius: '12px',
+            textAlign: 'center', lineHeight: '48px',
+            fontSize: '24px', color: CYAN, marginRight: '14px'
+        }, '⚙');
+        hdr.appendChild(icon);
+
         var title = mkEl('span', {
             fontSize: '22px', fontWeight: 'bold', color: TXT,
             letterSpacing: '3px', verticalAlign: 'middle',
@@ -198,13 +172,13 @@
         verBadge.textContent = '...';
         hdr.appendChild(verBadge);
 
-        var usbStatus = mkEl('span', {
+        var status = mkEl('span', {
             display: 'inline-block', verticalAlign: 'middle',
             marginLeft: '18px', fontSize: '16px', color: TXT3,
             lineHeight: '72px'
         });
-        usbStatus.id = 'tm-usb-status';
-        hdr.appendChild(usbStatus);
+        status.id = 'tm-header-status';
+        hdr.appendChild(status);
 
         var close = mkEl('div', {
             position: 'absolute', right: '18px', top: '14px',
@@ -235,6 +209,75 @@
         return bar;
     }
 
+    /* ── Footer ────────────────────────────────────────────────────── */
+    function buildFooter() {
+        var ftr = mkEl('div', {
+            position: 'absolute', bottom: '0', left: '0', right: '0', height: '72px',
+            background: HDR_BG, borderTop: '1px solid ' + CARD_BD,
+            padding: '12px 24px', zIndex: '2'
+        });
+
+        var rb = mkFooterBtn('↻  Refresh', BTN_BG, TXT2, function() {
+            loadData();
+        });
+        ftr.appendChild(rb);
+
+        var sb = mkFooterBtn('•  Scan USB', '#0891b2', '#fff', function() {
+            sb.firstChild.nodeValue = 'Scanning...';
+            api('GET', '/api/usb/scan', function(s, d) {
+                cachedUsb = d;
+                sb.firstChild.nodeValue = '•  Scan USB';
+                updateHeaderStatus();
+                loadData();
+            });
+        });
+        setS(sb, { marginLeft: '12px' });
+        ftr.appendChild(sb);
+
+        var tabs = mkEl('span', {
+            display: 'inline-block', marginLeft: '20px',
+            background: BTN_BG, borderRadius: '9px',
+            overflow: 'hidden', verticalAlign: 'middle',
+            border: '1px solid ' + CARD_BD
+        });
+        tabs.id = 'tm-filter-tabs';
+
+        var filters = [
+            { key: 'all', label: 'All' },
+            { key: 'installed', label: 'Installed' },
+            { key: 'available', label: 'On USB' }
+        ];
+        for (var i = 0; i < filters.length; i++) {
+            (function(f) {
+                var tab = mkEl('span', {
+                    display: 'inline-block', padding: '10px 20px',
+                    fontSize: '16px', fontWeight: 'bold', cursor: 'pointer',
+                    color: f.key === 'all' ? '#fff' : TXT3,
+                    background: f.key === 'all' ? BTN_BG2 : 'transparent'
+                });
+                tab.setAttribute('data-action', '1');
+                tab.setAttribute('data-filter', f.key);
+                tab.textContent = f.label;
+                tab.onclick = function() { setFilter(f.key); };
+                tabs.appendChild(tab);
+            })(filters[i]);
+        }
+        ftr.appendChild(tabs);
+
+        return ftr;
+    }
+
+    function mkFooterBtn(label, bg, color, onclick) {
+        var b = mkEl('span', {
+            display: 'inline-block', padding: '12px 24px',
+            background: bg, color: color, borderRadius: '9px',
+            cursor: 'pointer', fontSize: '16px', fontWeight: 'bold',
+            verticalAlign: 'middle', border: '1px solid ' + CARD_BD
+        }, label);
+        b.setAttribute('data-action', '1');
+        b.onclick = onclick;
+        return b;
+    }
 
     /* ── Main overlay ─────────────────────────────────────────────── */
     function showUI() {
@@ -252,12 +295,14 @@
         overlay.appendChild(buildStatusBar());
 
         var content = mkEl('div', {
-            position: 'absolute', top: '73px', bottom: '0', left: '0', right: '0',
+            position: 'absolute', top: '73px', bottom: '73px', left: '0', right: '0',
             overflowY: 'auto', overflowX: 'hidden', padding: '16px 24px'
         });
         content.id = 'tweaks-content';
         enableScroll(content);
         overlay.appendChild(content);
+
+        overlay.appendChild(buildFooter());
         document.body.appendChild(overlay);
 
         loadData();
@@ -283,7 +328,7 @@
 
             api('GET', '/api/usb/scan', function(s2, usb) {
                 cachedUsb = usb;
-                updateUsbStatus();
+                updateHeaderStatus();
 
                 if (!usb || !usb.usb_mounted) {
                     renderNoUsb(c);
@@ -300,6 +345,7 @@
                         api('GET', '/api/tweaks/list', function(s4, data) {
                             cachedTweaks = data;
                             renderTweaks(c);
+                            updateFilterCounts();
                         });
                     });
                 });
@@ -394,16 +440,72 @@
         if (el && cachedVer) el.textContent = 'v' + (cachedVer.version || '?');
     }
 
-    function updateUsbStatus() {
-        var el = document.getElementById('tm-usb-status');
+    function updateHeaderStatus() {
+        var el = document.getElementById('tm-header-status');
         if (!el) return;
-        if (cachedUsb && cachedUsb.usb_mounted) {
-            el.textContent = '●  USB';
-            el.style.color = CYAN;
-        } else {
-            el.textContent = '○  No USB';
-            el.style.color = TXT3;
+        el.innerHTML = '';
+
+        var count = 0;
+        if (cachedTweaks && cachedTweaks.tweaks) {
+            for (var i = 0; i < cachedTweaks.tweaks.length; i++) {
+                if (cachedTweaks.tweaks[i].installed) count++;
+            }
         }
+
+        var dot = mkEl('span', { color: GREEN }, '● ');
+        el.appendChild(dot);
+        el.appendChild(document.createTextNode(count + ' installed'));
+
+        var usbDot = mkEl('span', {
+            marginLeft: '18px',
+            color: (cachedUsb && cachedUsb.usb_mounted) ? CYAN : TXT3
+        });
+        usbDot.textContent = (cachedUsb && cachedUsb.usb_mounted)
+            ? '●  USB Connected'
+            : '○  No USB';
+        el.appendChild(usbDot);
+    }
+
+    /* ── Filter tabs ──────────────────────────────────────────────── */
+    function setFilter(f) {
+        currentFilter = f;
+        var tabs = document.getElementById('tm-filter-tabs');
+        if (tabs) {
+            var children = tabs.childNodes;
+            for (var i = 0; i < children.length; i++) {
+                var child = children[i];
+                if (child.getAttribute) {
+                    var key = child.getAttribute('data-filter');
+                    child.style.background = (key === f) ? BTN_BG2 : 'transparent';
+                    child.style.color = (key === f) ? '#fff' : TXT3;
+                }
+            }
+        }
+        var c = document.getElementById('tweaks-content');
+        if (c && cachedTweaks) renderTweaks(c);
+    }
+
+    function updateFilterCounts() {
+        if (!cachedTweaks || !cachedTweaks.tweaks) return;
+        var all = cachedTweaks.tweaks.length;
+        var inst = 0, avail = 0;
+        for (var i = 0; i < cachedTweaks.tweaks.length; i++) {
+            if (cachedTweaks.tweaks[i].installed) inst++;
+            if (cachedTweaks.tweaks[i].has_source && !cachedTweaks.tweaks[i].installed) avail++;
+        }
+        var tabs = document.getElementById('tm-filter-tabs');
+        if (!tabs) return;
+        var children = tabs.childNodes;
+        for (var j = 0; j < children.length; j++) {
+            var child = children[j];
+            if (!child.getAttribute) continue;
+            var key = child.getAttribute('data-filter');
+            if (key === 'all') child.textContent = 'All (' + all + ')';
+            else if (key === 'installed') child.textContent = 'Installed (' + inst + ')';
+            else if (key === 'available') child.textContent = 'On USB (' + avail + ')';
+        }
+
+        updateHeaderStatus();
     }
 
     /* ── Error display ────────────────────────────────────────────── */
@@ -478,15 +580,28 @@
         }
 
         var tweaks = cachedTweaks.tweaks;
-        if (tweaks.length === 0) {
+        var filtered = [];
+        for (var i = 0; i < tweaks.length; i++) {
+            var t = tweaks[i];
+            if (currentFilter === 'installed' && !t.installed) continue;
+            if (currentFilter === 'available' && (t.installed || !t.has_source)) continue;
+            filtered.push(t);
+        }
+
+        if (filtered.length === 0) {
+            var msg = currentFilter === 'available'
+                ? 'No new tweaks on USB'
+                : currentFilter === 'installed'
+                    ? 'No tweaks installed yet'
+                    : 'No tweaks found. Insert USB with tweaks.';
             c.appendChild(mkEl('div', {
                 color: TXT3, fontSize: '20px', padding: '60px 0', textAlign: 'center'
-            }, 'No tweaks found. Insert USB with tweaks.'));
+            }, msg));
             return;
         }
 
-        for (var i = 0; i < tweaks.length; i++) {
-            c.appendChild(makeTweakCard(tweaks[i]));
+        for (var j = 0; j < filtered.length; j++) {
+            c.appendChild(makeTweakCard(filtered[j]));
         }
     }
 
@@ -531,15 +646,16 @@
 
         if (t.installed) {
             badges.appendChild(makeBadge('●  INSTALLED', GREEN));
+
             if (t.update_available) {
                 badges.appendChild(makeBadge('↑  UPDATE v' + t.version, BLUE));
             }
-        } else if (t.setup) {
-            badges.appendChild(makeBadge('●  READY', CYAN));
-        } else if (t.has_source) {
-            badges.appendChild(makeBadge('AVAILABLE ON USB', TXT3));
         } else {
-            badges.appendChild(makeBadge('NOT ON USB', TXT3));
+            if (t.has_source) {
+                badges.appendChild(makeBadge('AVAILABLE', TXT3));
+            } else {
+                badges.appendChild(makeBadge('NOT ON USB', TXT3));
+            }
         }
         card.appendChild(badges);
 
@@ -550,14 +666,12 @@
 
         if (t.installed) {
             if (t.update_available && t.has_source) {
-                btnArea.appendChild(makeActionBtn('UPDATE', CYAN, t, 'install'));
+                btnArea.appendChild(makeActionBtn('UPDATE', CYAN, t, 'update'));
                 btnArea.appendChild(mkEl('span', { display: 'inline-block', width: '8px' }));
             }
             btnArea.appendChild(makeActionBtn('UNINSTALL', RED, t, 'uninstall'));
-        } else if (t.setup) {
-            btnArea.appendChild(makeActionBtn('INSTALL', GREEN, t, 'install'));
         } else if (t.has_source) {
-            btnArea.appendChild(makeActionBtn('SETUP', CYAN, t, 'setup'));
+            btnArea.appendChild(makeActionBtn('INSTALL', GREEN, t, 'install'));
         }
 
         card.appendChild(btnArea);
@@ -581,22 +695,10 @@
 
     var actionBusy = false;
 
-    function reloadList() {
-        api('GET', '/api/tweaks/list', function(s, data) {
-            if (data) {
-                cachedTweaks = data;
-                var c = document.getElementById('tm-content');
-                if (c) renderTweaks(c);
-            }
-        });
-    }
-
     function makeActionBtn(label, color, tweak, action) {
-        var filled = (label === 'UPDATE' || label === 'SETUP');
         var b = mkEl('span', {
             display: 'inline-block', padding: '12px 28px',
-            background: filled ? CYAN : 'transparent',
-            color: filled ? '#fff' : color,
+            background: 'transparent', color: color,
             borderRadius: '8px', cursor: 'pointer',
             fontSize: '16px', fontWeight: 'bold',
             letterSpacing: '2px',
@@ -606,59 +708,26 @@
         b.onclick = function() {
             if (actionBusy) return;
             actionBusy = true;
-
-            if (action === 'setup') {
-                showModal('Copying ' + tweak.name + ' to CMU...');
-                api('POST', '/api/tweaks/setup/' + tweak.id, function(s, res) {
-                    if (res && res.ok) {
-                        actionBusy = false;
-                        updateModal('✓', 'Ready to install', '', GREEN, 1500);
-                        setTimeout(function() { reloadList(); }, 1600);
-                    } else {
-                        actionBusy = false;
-                        var err = (res && res.error) || 'Setup failed';
-                        updateModal('✗', 'Setup failed', err, RED, 3000);
-                    }
-                });
-                return;
-            }
-
-            var isUpd = (action === 'install' && tweak.installed);
-
-            if (isUpd) {
-                showModal('Updating ' + tweak.name + '...');
-                api('POST', '/api/tweaks/update/' + tweak.id, function(s, res) {
-                    if (res && res.ok) {
-                        if (res.reboot) {
-                            showRebootModal('Updated');
-                        } else {
+            var verb = action === 'install' ? 'Installing' : 'Uninstalling';
+            showModal(verb + ' ' + tweak.name + '...');
+            api('POST', '/api/tweaks/' + action + '/' + tweak.id, function(s, res) {
+                if (res && res.ok) {
+                    if (res.reboot) {
+                        updateModal('⏻', 'Rebooting...', 'System will restart in a few seconds', CYAN, 0);
+                        setTimeout(function() {
                             actionBusy = false;
-                            updateModal('✓', 'Updated', '', GREEN, 1500);
-                        }
+                            dismissModal();
+                        }, 15000);
                     } else {
                         actionBusy = false;
-                        var err = (res && res.error) || 'Update failed';
-                        updateModal('✗', 'Update failed', err, RED, 3000);
+                        updateModal('✓', 'Done', '', GREEN, 1500);
                     }
-                });
-            } else {
-                var verb = action === 'install' ? 'Installing' : 'Uninstalling';
-                showModal(verb + ' ' + tweak.name + '...');
-                api('POST', '/api/tweaks/' + action + '/' + tweak.id, function(s, res) {
-                    if (res && res.ok) {
-                        if (res.reboot) {
-                            showRebootModal(action === 'install' ? 'Installed' : 'Uninstalled');
-                        } else {
-                            actionBusy = false;
-                            updateModal('✓', 'Done', '', GREEN, 1500);
-                        }
-                    } else {
-                        actionBusy = false;
-                        var err = (res && res.error) || 'Operation failed';
-                        updateModal('✗', 'Failed', err, RED, 3000);
-                    }
-                });
-            }
+                } else {
+                    actionBusy = false;
+                    var err = (res && res.error) || 'Operation failed';
+                    updateModal('✗', 'Failed', err, RED, 3000);
+                }
+            });
         };
         return b;
     }
@@ -722,36 +791,6 @@
     function dismissModal() {
         if (modal && modal.parentNode) modal.parentNode.removeChild(modal);
         modal = null;
-    }
-
-    function showRebootModal(verb) {
-        updateModal('⏻', verb + ' — reboot required', 'Tap Reboot when ready', CYAN, 0);
-        var box = document.getElementById('modal-sub');
-        if (!box || !box.parentNode) return;
-        var wrap = mkEl('div', { marginTop: '20px', textAlign: 'center' });
-        var btnR = mkEl('div', {
-            display: 'inline-block', padding: '12px 36px',
-            background: CYAN, color: '#000', fontWeight: 'bold',
-            fontSize: '18px', borderRadius: '8px', cursor: 'pointer',
-            marginRight: '12px'
-        }, 'REBOOT');
-        btnR.onclick = function() {
-            updateModal('⏻', 'Rebooting...', '', CYAN, 0);
-            api('POST', '/api/system/reboot', function() {});
-        };
-        var btnS = mkEl('div', {
-            display: 'inline-block', padding: '12px 24px',
-            border: '1px solid ' + TXT3, color: TXT3,
-            fontSize: '18px', borderRadius: '8px', cursor: 'pointer'
-        }, 'LATER');
-        btnS.onclick = function() {
-            actionBusy = false;
-            dismissModal();
-            loadData();
-        };
-        wrap.appendChild(btnR);
-        wrap.appendChild(btnS);
-        box.parentNode.appendChild(wrap);
     }
 
     /* ── Helpers ───────────────────────────────────────────────────── */

@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <glob.h>
 #include "tweaks.h"
 #include "jsmn.h"
 #include "usb.h"
@@ -11,6 +12,17 @@
 
 static char firmware_version[32] = "";
 static volatile int busy = 0;
+
+static int remount_rw(void) {
+    int r = system("mount -o remount,rw /");
+    if (r != 0)
+        tweaksd_log("ERROR", "system", "mount -o remount,rw / failed");
+    return r;
+}
+
+static void remount_ro(void) {
+    system("mount -o remount,ro /");
+}
 
 static int validate_id(const char *id) {
     if (!id || !id[0]) return -1;
@@ -24,12 +36,19 @@ static int validate_id(const char *id) {
 }
 
 static void read_firmware_version(void) {
-    FILE *f = fopen("/jci/version", "r");
+    FILE *f = fopen("/jci/version.ini", "r");
     if (!f) { strcpy(firmware_version, "unknown"); return; }
-    if (!fgets(firmware_version, sizeof(firmware_version), f))
-        strcpy(firmware_version, "unknown");
-    firmware_version[strcspn(firmware_version, "\n\r")] = '\0';
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "JCI_SW_VER=", 11) == 0) {
+            line[strcspn(line, "\n\r")] = '\0';
+            snprintf(firmware_version, sizeof(firmware_version), "%s", line + 11);
+            fclose(f);
+            return;
+        }
+    }
     fclose(f);
+    strcpy(firmware_version, "unknown");
 }
 
 int tweaks_init(void) {
@@ -261,27 +280,81 @@ int tweaks_merge_lists(tweak_list_t *installed, const tweak_list_t *usb) {
     return installed->count;
 }
 
+static void flatten_path(const char *path, char *out, int outlen) {
+    const char *p = (*path == '/') ? path + 1 : path;
+    int i = 0;
+    while (*p && i < outlen - 1) {
+        out[i++] = (*p == '/') ? '_' : *p;
+        p++;
+    }
+    out[i] = '\0';
+}
+
+static int backup_one_file(const char *filepath, const char *backup_dir) {
+    struct stat st;
+    if (stat(filepath, &st) != 0) return 0;
+
+    char flat[MAX_PATH];
+    flatten_path(filepath, flat, sizeof(flat));
+
+    char dst[MAX_PATH];
+    snprintf(dst, sizeof(dst), "%s/%s", backup_dir, flat);
+
+    char cmd[1024];
+    if (S_ISDIR(st.st_mode)) {
+        snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -a '%s' '%s'", dst, filepath, dst);
+    } else {
+        snprintf(cmd, sizeof(cmd), "cp -a '%s' '%s'", filepath, dst);
+    }
+    return system(cmd) == 0 ? 0 : -1;
+}
+
 int tweaks_backup_files(const tweak_t *tweak) {
     char backup_dir[MAX_PATH];
     snprintf(backup_dir, sizeof(backup_dir), "%s/%s", TWEAKS_BACKUPS, tweak->id);
     mkdir(backup_dir, 0755);
 
     for (int i = 0; i < tweak->modifies_count; i++) {
-        struct stat st;
-        if (stat(tweak->modifies[i], &st) != 0) continue;
+        if (strchr(tweak->modifies[i], '\'')) continue;
 
-        char dst[MAX_PATH];
-        const char *basename = strrchr(tweak->modifies[i], '/');
-        basename = basename ? basename + 1 : tweak->modifies[i];
-        snprintf(dst, sizeof(dst), "%s/%s", backup_dir, basename);
-
-        char cmd[1024];
-        if (S_ISDIR(st.st_mode)) {
-            snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -a '%s' '%s'", dst, tweak->modifies[i], dst);
+        if (strpbrk(tweak->modifies[i], "*?[")) {
+            glob_t g;
+            if (glob(tweak->modifies[i], GLOB_NOSORT, NULL, &g) == 0) {
+                for (size_t j = 0; j < g.gl_pathc; j++) {
+                    if (backup_one_file(g.gl_pathv[j], backup_dir) != 0) {
+                        globfree(&g);
+                        return -1;
+                    }
+                }
+                globfree(&g);
+            }
         } else {
-            snprintf(cmd, sizeof(cmd), "cp -a '%s' '%s'", tweak->modifies[i], dst);
+            if (backup_one_file(tweak->modifies[i], backup_dir) != 0)
+                return -1;
         }
-        if (system(cmd) != 0) return -1;
+    }
+    return 0;
+}
+
+static int restore_one_file(const char *filepath, const char *backup_dir, const char *id) {
+    char flat[MAX_PATH];
+    flatten_path(filepath, flat, sizeof(flat));
+
+    char src[MAX_PATH];
+    snprintf(src, sizeof(src), "%s/%s", backup_dir, flat);
+
+    struct stat st;
+    if (stat(src, &st) != 0) return 0;
+
+    char cmd[1024];
+    if (S_ISDIR(st.st_mode)) {
+        snprintf(cmd, sizeof(cmd), "cp -a '%s'/. '%s/'", src, filepath);
+    } else {
+        snprintf(cmd, sizeof(cmd), "cp -a '%s' '%s'", src, filepath);
+    }
+    if (system(cmd) != 0) {
+        tweaksd_log("ERROR", id, "restore failed for file");
+        return -1;
     }
     return 0;
 }
@@ -297,25 +370,25 @@ int tweaks_restore_files(const char *id) {
     tweak_t tweak;
     if (tweak_parse_json(tweak_path, &tweak) != 0) return -1;
 
+    int errors = 0;
     for (int i = 0; i < tweak.modifies_count; i++) {
-        const char *basename = strrchr(tweak.modifies[i], '/');
-        basename = basename ? basename + 1 : tweak.modifies[i];
+        if (strchr(tweak.modifies[i], '\'')) continue;
 
-        char src[MAX_PATH];
-        snprintf(src, sizeof(src), "%s/%s", backup_dir, basename);
-
-        struct stat st;
-        if (stat(src, &st) != 0) continue;
-
-        char cmd[1024];
-        if (S_ISDIR(st.st_mode)) {
-            snprintf(cmd, sizeof(cmd), "cp -a '%s'/. '%s/'", src, tweak.modifies[i]);
+        if (strpbrk(tweak.modifies[i], "*?[")) {
+            glob_t g;
+            if (glob(tweak.modifies[i], GLOB_NOSORT, NULL, &g) == 0) {
+                for (size_t j = 0; j < g.gl_pathc; j++) {
+                    if (restore_one_file(g.gl_pathv[j], backup_dir, id) != 0)
+                        errors++;
+                }
+                globfree(&g);
+            }
         } else {
-            snprintf(cmd, sizeof(cmd), "cp -a '%s' '%s'", src, tweak.modifies[i]);
+            if (restore_one_file(tweak.modifies[i], backup_dir, id) != 0)
+                errors++;
         }
-        system(cmd);
     }
-    return 0;
+    return errors ? -1 : 0;
 }
 
 int tweaks_setup(const char *id, const tweak_list_t *list, char *result, int resultlen) {
@@ -392,17 +465,26 @@ int tweaks_install(const char *id, const tweak_list_t *list, char *result, int r
         snprintf(result, resultlen, "{\"ok\":false,\"error\":\"not set up (run setup first)\"}");
         return -1;
     }
+    if (strchr(script_dir, '\'')) {
+        snprintf(result, resultlen, "{\"ok\":false,\"error\":\"invalid path (contains quote)\"}");
+        return -1;
+    }
 
     busy = 1;
 
     /* remount rw */
-    system("mount -o remount,rw /");
+    if (remount_rw() != 0) {
+        tweaksd_log("ERROR", id, "install aborted: remount rw failed");
+        snprintf(result, resultlen, "{\"ok\":false,\"error\":\"remount rw failed\"}");
+        busy = 0;
+        return -1;
+    }
 
     /* backup files before modifying */
     if (tweak->modifies_count > 0) {
         if (tweaks_backup_files(tweak) != 0) {
             snprintf(result, resultlen, "{\"ok\":false,\"error\":\"backup failed\"}");
-            system("mount -o remount,ro /");
+            remount_ro();
             busy = 0;
             return -1;
         }
@@ -415,7 +497,7 @@ int tweaks_install(const char *id, const tweak_list_t *list, char *result, int r
     FILE *p = popen(cmd, "r");
     if (!p) {
         snprintf(result, resultlen, "{\"ok\":false,\"error\":\"cannot run install script\"}");
-        system("mount -o remount,ro /");
+        remount_ro();
         busy = 0;
         return -1;
     }
@@ -440,13 +522,13 @@ int tweaks_install(const char *id, const tweak_list_t *list, char *result, int r
     if (ret != 0) {
         snprintf(result, resultlen,
                  "{\"ok\":false,\"error\":\"install script failed (exit %d)\"}", ret);
-        system("mount -o remount,ro /");
+        remount_ro();
         busy = 0;
         return -1;
     }
 
     /* script may have left rootfs ro — re-mount for bookkeeping */
-    system("mount -o remount,rw /");
+    remount_rw();
 
     /* copy full tweak package to installed dir */
     char inst_dir[MAX_PATH];
@@ -455,7 +537,7 @@ int tweaks_install(const char *id, const tweak_list_t *list, char *result, int r
              inst_dir, script_dir, inst_dir);
     system(cmd);
 
-    system("mount -o remount,ro /");
+    remount_ro();
 
     snprintf(result, resultlen,
              "{\"ok\":true,\"reboot\":%s}",
@@ -494,7 +576,12 @@ int tweaks_uninstall(const char *id, char *result, int resultlen) {
 
     busy = 1;
 
-    system("mount -o remount,rw /");
+    if (remount_rw() != 0) {
+        tweaksd_log("ERROR", id, "uninstall aborted: remount rw failed");
+        snprintf(result, resultlen, "{\"ok\":false,\"error\":\"remount rw failed\"}");
+        busy = 0;
+        return -1;
+    }
 
     int script_ret = 0;
 
@@ -533,20 +620,20 @@ int tweaks_uninstall(const char *id, char *result, int resultlen) {
     if (script_ret != 0) {
         snprintf(result, resultlen,
                  "{\"ok\":false,\"error\":\"uninstall script failed (exit %d)\"}", script_ret);
-        system("mount -o remount,ro /");
+        remount_ro();
         busy = 0;
         return -1;
     }
 
     /* script may have left rootfs ro — re-mount for bookkeeping */
-    system("mount -o remount,rw /");
+    remount_rw();
 
     /* remove installed record */
     char cmd[512];
     snprintf(cmd, sizeof(cmd), "rm -rf '%s'", inst_dir);
     system(cmd);
 
-    system("mount -o remount,ro /");
+    remount_ro();
 
     snprintf(result, resultlen,
              "{\"ok\":true,\"reboot\":%s}",
@@ -588,7 +675,12 @@ int tweaks_update(const char *id, const tweak_list_t *list, char *result, int re
     }
 
     busy = 1;
-    system("mount -o remount,rw /");
+    if (remount_rw() != 0) {
+        tweaksd_log("ERROR", id, "update aborted: remount rw failed");
+        snprintf(result, resultlen, "{\"ok\":false,\"error\":\"remount rw failed\"}");
+        busy = 0;
+        return -1;
+    }
 
     /* Step 1: run uninstall with NO_REBOOT=1 */
     int uninstall_ok = 0;
@@ -620,7 +712,7 @@ int tweaks_update(const char *id, const tweak_list_t *list, char *result, int re
 
     if (!uninstall_ok) {
         snprintf(result, resultlen, "{\"ok\":false,\"error\":\"uninstall step failed\"}");
-        system("mount -o remount,ro /");
+        remount_ro();
         busy = 0;
         return -1;
     }
@@ -628,7 +720,7 @@ int tweaks_update(const char *id, const tweak_list_t *list, char *result, int re
     tweaksd_log("UPDATE", id, "uninstall done, installing new");
 
     /* remove old installed record */
-    system("mount -o remount,rw /");
+    remount_rw();
     snprintf(inst_dir, sizeof(inst_dir), "%s/installed/%s", TWEAKS_DIR, id);
     char rmcmd[512];
     snprintf(rmcmd, sizeof(rmcmd), "rm -rf '%s'", inst_dir);
@@ -645,7 +737,7 @@ int tweaks_update(const char *id, const tweak_list_t *list, char *result, int re
     FILE *p = popen(cmd, "r");
     if (!p) {
         snprintf(result, resultlen, "{\"ok\":false,\"error\":\"cannot run install script\"}");
-        system("mount -o remount,ro /");
+        remount_ro();
         busy = 0;
         return -1;
     }
@@ -670,19 +762,19 @@ int tweaks_update(const char *id, const tweak_list_t *list, char *result, int re
     if (ret != 0) {
         snprintf(result, resultlen,
                  "{\"ok\":false,\"error\":\"install step failed (exit %d)\"}", ret);
-        system("mount -o remount,ro /");
+        remount_ro();
         busy = 0;
         return -1;
     }
 
-    system("mount -o remount,rw /");
+    remount_rw();
 
     snprintf(inst_dir, sizeof(inst_dir), "%s/installed/%s", TWEAKS_DIR, id);
     snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -a '%s' '%s'",
              inst_dir, tweak->source_path, inst_dir);
     system(cmd);
 
-    system("mount -o remount,ro /");
+    remount_ro();
 
     snprintf(result, resultlen,
              "{\"ok\":true,\"reboot\":%s}",

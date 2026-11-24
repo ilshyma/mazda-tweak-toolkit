@@ -1,6 +1,6 @@
 #!/bin/sh
 # Touchscreen While Moving — Uninstall
-# Restores Common.js from backup and re-enables speed restriction
+# Reverses Common.js patch and re-enables speed restriction
 
 TWEAK_DIR="$(dirname "$0")"
 LIB="/data_persist/tweaks/lib/patch.sh"
@@ -9,7 +9,15 @@ LIB="/data_persist/tweaks/lib/patch.sh"
 
 COMMON="/jci/gui/common/js/Common.js"
 
-mount -o remount,rw / 2>/dev/null
+if [ ! -f "$COMMON" ]; then
+    echo "E1: Common.js not found"
+    exit 1
+fi
+
+if ! grep -q 'tweaks:touch-while-moving' "$COMMON" 2>/dev/null; then
+    echo "Not installed"
+    exit 0
+fi
 
 # Re-enable NVRAM speed restrictions
 [ -x /jci/scripts/set_speed_restriction_config.sh ] && \
@@ -17,11 +25,22 @@ mount -o remount,rw / 2>/dev/null
 [ -x /jci/scripts/set_lvds_speed_restriction_config.sh ] && \
     /jci/scripts/set_lvds_speed_restriction_config.sh enable 2>/dev/null
 
-# Restore original Common.js
-patch_rollback "$COMMON"
+# Reverse the JS patch: uncomment Global.AtSpeed lines and remove marker
+patch_begin "$COMMON" "touch-while-moving"
+
+patch_sed 's/ \/\/ tweaks:touch-while-moving "Global\.AtSpeed/ "Global.AtSpeed/g' \
+    "restore Global.AtSpeed handler"
+
+patch_verify_not 'tweaks:touch-while-moving' "all markers removed"
+patch_verify ' "Global\.AtSpeed' "AtSpeed handler active"
+
+RES=$(patch_commit)
 RET=$?
 
-mount -o remount,ro / 2>/dev/null
+if [ $RET -ne 0 ]; then
+    echo "$RES"
+    exit 1
+fi
+echo "$RES"
 
-[ $RET -eq 0 ] && [ "${NO_REBOOT:-0}" != "1" ] && (sleep 5 && reboot) >/dev/null 2>&1 &
-exit $RET
+[ "${NO_REBOOT:-0}" != "1" ] && (sleep 5 && reboot) >/dev/null 2>&1 &

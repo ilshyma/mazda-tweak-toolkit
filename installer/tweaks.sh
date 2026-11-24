@@ -12,6 +12,7 @@ TAG="[tweaks install]"
 USB="${1:?usage: tweaks.sh <usb_path> <install|uninstall>}"
 ACTION="${2:?usage: tweaks.sh <usb_path> <install|uninstall>}"
 INSTALLER_DIR="$USB/tweaks-manager/installer"
+PATCH_LIB="${TWEAKS_LIB:-/data_persist/tweaks/lib/patch.sh}"
 VERSION_FILE="$USB/tweaks-manager/VERSION"
 if [ -f "$VERSION_FILE" ]; then
     VERSION=$(cat "$VERSION_FILE" | tr -d '[:space:]')
@@ -65,10 +66,48 @@ do_install() {
     STAGE_WIFI="/jci/scripts/stage_wifi.sh"
     SSHD_CONF="/data_persist/tweaks/sshd_tweaks.conf"
     if [ -f "$STAGE_WIFI" ]; then
-        # Set root password
-        echo "root:jci" | chpasswd 2>/dev/null || {
-            HASH=$(echo -n 'jci' | openssl passwd -1 -stdin 2>/dev/null)
-            [ -n "$HASH" ] && sed -i "s|^root:[^:]*:|root:${HASH}:|" /etc/shadow 2>/dev/null
+        # Break /etc/passwd symlink (stock points to read-only squashfs)
+        if [ -L /etc/passwd ]; then
+            REAL=$(readlink -f /etc/passwd 2>/dev/null)
+            if [ -z "$REAL" ]; then
+                # BusyBox readlink -f returns empty when target is gone;
+                # try the raw symlink target instead
+                REAL=$(readlink /etc/passwd 2>/dev/null)
+            fi
+            if [ -n "$REAL" ] && [ -f "$REAL" ]; then
+                if cp "$REAL" /etc/passwd.tmp && mv /etc/passwd.tmp /etc/passwd; then
+                    log "[0/5] broke /etc/passwd symlink -> writable copy"
+                else
+                    rm -f /etc/passwd.tmp
+                    ln -sf "$REAL" /etc/passwd
+                    log "[0/5] WARN: atomic copy failed, symlink restored — SSH may not work"
+                fi
+            else
+                # Target doesn't exist; try known stock locations
+                for CAND in /config-mfg/passwd /jci/passwd /etc/passwd.orig; do
+                    if [ -f "$CAND" ]; then
+                        cp "$CAND" /etc/passwd.tmp && mv /etc/passwd.tmp /etc/passwd
+                        log "[0/5] broke /etc/passwd symlink -> copy from $CAND"
+                        break
+                    fi
+                done
+                if [ ! -f /etc/passwd ]; then
+                    # Last resort: generate a minimal passwd so the system keeps running
+                    echo "root:x:0:0:root:/root:/bin/sh" > /etc/passwd
+                    log "[0/5] WARN: no passwd source found, created minimal /etc/passwd"
+                fi
+            fi
+        fi
+        if [ ! -f /etc/passwd ]; then
+            # Safety: if /etc/passwd is missing for any reason, create a minimal one
+            echo "root:x:0:0:root:/root:/bin/sh" > /etc/passwd
+            log "[0/5] WARN: /etc/passwd was missing, created minimal"
+        fi
+        # Set password for uid 0 user (stock CMU uses 'cmu', not 'root')
+        UID0_USER=$(awk -F: '$3==0{print $1;exit}' /etc/passwd)
+        echo "${UID0_USER:-cmu}:jci" | chpasswd 2>/dev/null || {
+            HASH=$(openssl passwd -1 jci 2>/dev/null)
+            [ -n "$HASH" ] && sed -i "s|^${UID0_USER:-cmu}:[^:]*:|${UID0_USER:-cmu}:${HASH}:|" /etc/passwd 2>/dev/null
         }
         # Create custom sshd config (port 22, password auth)
         mkdir -p /data_persist/tweaks
@@ -89,23 +128,31 @@ ClientAliveCountMax 4
 PidFile /var/run/sshd_tweaks.pid
 Subsystem sftp /usr/libexec/sftp-server
 SSHCONF
-        # Persistent sshd autostart (idempotent — checks marker)
-        if ! grep -q '# tweaks:ssh-access' "$STAGE_WIFI" 2>/dev/null; then
+        # Persistent sshd autostart (idempotent — checks begin/end markers)
+        if ! grep -q '# tweaks:ssh-safety:begin' "$STAGE_WIFI" 2>/dev/null; then
             SSH_BAK="/data_persist/tweaks/backups/ssh-access"
             mkdir -p "$SSH_BAK"
-            cp -a "$STAGE_WIFI" "$SSH_BAK/stage_wifi.sh.bak"
-            cat >> "$STAGE_WIFI" << 'SSHPATCH'
+            [ ! -f "$SSH_BAK/stage_wifi.sh.bak" ] && cp -a "$STAGE_WIFI" "$SSH_BAK/stage_wifi.sh.bak"
+            if [ -f "$PATCH_LIB" ]; then
+                . "$PATCH_LIB"
+                patch_begin "$STAGE_WIFI"
+                patch_append_block "tweaks:ssh-safety" '/usr/sbin/sshd -f /data_persist/tweaks/sshd_tweaks.conf 2>/dev/null' "sshd autostart"
+                patch_commit
+            else
+                cat >> "$STAGE_WIFI" << 'SSHPATCH'
 
-# tweaks:ssh-access — persistent SSH daemon (port 22, password auth)
+# tweaks:ssh-safety:begin
 /usr/sbin/sshd -f /data_persist/tweaks/sshd_tweaks.conf 2>/dev/null
+# tweaks:ssh-safety:end
 SSHPATCH
+            fi
             log "[0/5] sshd autostart added to stage_wifi.sh"
         else
             log "[0/5] sshd autostart already present"
         fi
         # Start sshd right now
         /usr/sbin/sshd -f "$SSHD_CONF" 2>/dev/null || true
-        log "[0/5] SSH ready — ssh root@192.168.53.1 -p 22 pass:jci"
+        log "[0/5] SSH ready — ssh ${UID0_USER:-cmu}@192.168.53.1 -p 22 pass:jci"
     else
         log "[0/5] WARN: stage_wifi.sh not found, SSH not enabled"
     fi
@@ -120,7 +167,7 @@ SSHPATCH
     chmod 755 /data_persist/tweaks/tweaksd
 
     if [ -f "$INSTALLER_DIR/../lib/patch.sh" ]; then
-        cp "$INSTALLER_DIR/../lib/patch.sh" /data_persist/tweaks/lib/patch.sh
+        cp "$INSTALLER_DIR/../lib/patch.sh" /data_persist/tweaks/lib/patch.sh || log "[1/5] WARN: failed to copy patch.sh"
         chmod 755 /data_persist/tweaks/lib/patch.sh
         log "[1/5] patch.sh copied"
     fi
@@ -132,7 +179,7 @@ SSHPATCH
     if [ -f "$BAK" ]; then
         log "[2/5] backup exists at $BAK, skipping"
     else
-        cp -a "$CONF" "$BAK"
+        cp -a "$CONF" "$BAK" || die 3 "backup of $CONF failed"
         log "[2/5] backup -> $BAK"
     fi
 
@@ -140,63 +187,83 @@ SSHPATCH
     for OTHER in /jci/sm/sm.conf /jci/sm/sm_WCP.conf; do
         [ "$OTHER" = "$CONF" ] && continue
         [ -f "$OTHER" ] || continue
-        if grep -q "tweaksd" "$OTHER"; then
+        if grep -q 'name="tweaksd"' "$OTHER"; then
             OBAK="/data_persist/$(basename "$OTHER").bak_tweaks"
             [ -f "$OBAK" ] || cp -a "$OTHER" "$OBAK"
-            sed -i '/tweaksd/d' "$OTHER"
-            log "[2/5] removed stale tweaksd from $OTHER"
+            awk '/<service.*name="tweaksd"/{skip=1} /<\/service>/{if(skip){skip=0;next}} !skip' "$OTHER" > "$OTHER.tmp" && mv "$OTHER.tmp" "$OTHER"
+            log "[2/5] removed stale tweaksd service from $OTHER"
         fi
     done
 
-    # ── Boot autostart via stage_2.sh ──────────────────────────────
-    log "[3/5] Setting up boot autostart..."
+    # ── Clean up any boot autostart (no permanent daemon) ──────────
+    log "[3/5] Removing boot autostart (temp server only)..."
     STAGE2="/jci/scripts/stage_2.sh"
     STAGE2_BAK="/data_persist/tweaks/backups/_stage_2.sh"
-
-    if [ -f "$STAGE2" ]; then
-        if grep -q "tweaksd" "$STAGE2"; then
-            log "[3/5] tweaksd already in stage_2.sh"
-        else
-            # Backup original stage_2.sh (once)
-            if [ ! -f "$STAGE2_BAK" ]; then
-                cp -a "$STAGE2" "$STAGE2_BAK"
-                log "[3/5] backed up stage_2.sh"
-            fi
-            cat >> "$STAGE2" << 'STAGE2EOF'
-
-# Tweaks Manager — autostart daemon on boot
-(
-    sleep 12
-    if [ -x /data_persist/tweaks/tweaksd ]; then
-        /data_persist/tweaks/tweaksd &
-    fi
-) &
-STAGE2EOF
-            log "[3/5] added tweaksd to stage_2.sh"
+    if grep -q '# tweaks:tweaksd-autostart:begin' "$STAGE2" 2>/dev/null; then
+        if [ ! -f "$STAGE2_BAK" ]; then
+            cp -a "$STAGE2" "$STAGE2_BAK"
         fi
+        if [ -f "$PATCH_LIB" ]; then
+            . "$PATCH_LIB"
+            patch_begin "$STAGE2"
+            patch_remove_block "tweaks:tweaksd-autostart" "tweaksd boot autostart"
+            patch_commit
+        else
+            awk '/# tweaks:tweaksd-autostart:begin/{skip=1;next} /# tweaks:tweaksd-autostart:end/{skip=0;next} !skip' \
+                "$STAGE2" > "$STAGE2.tmp" && mv "$STAGE2.tmp" "$STAGE2"
+        fi
+        log "[3/5] removed old boot autostart"
+    elif grep -q "tweaksd" "$STAGE2" 2>/dev/null; then
+        if [ ! -f "$STAGE2_BAK" ]; then
+            cp -a "$STAGE2" "$STAGE2_BAK"
+        fi
+        awk '/# Tweaks Manager/{skip=1;next} skip && /^\) &/{skip=0;next} skip{next} /tweaksd/{next} {print}' \
+            "$STAGE2" > "$STAGE2.tmp" && mv "$STAGE2.tmp" "$STAGE2"
+        log "[3/5] removed legacy tweaksd from stage_2.sh"
     else
-        log "[3/5] WARN: stage_2.sh not found, skipping boot autostart"
+        log "[3/5] no boot autostart found, clean"
     fi
 
-    # Legacy autorun cleanup (old method that didn't work)
+    # Legacy autorun cleanup
     if [ -f /data_persist/dev/bin/autorun ] && grep -q "tweaksd" /data_persist/dev/bin/autorun 2>/dev/null; then
         sed -i '/tweaksd/d' /data_persist/dev/bin/autorun
         sed -i '/# Tweaks Manager daemon/d' /data_persist/dev/bin/autorun
         log "[3/5] cleaned up legacy autorun"
     fi
 
-    # ── Deploy Tweaks Menu UI (Opera userjs) ───────────────────────
-    log "[4/5] Deploying tweaks-menu.js..."
+    # ── Deploy Settings icon (Opera userjs) ──────────────────────
+    log "[4/5] Deploying tweaks-menu.js to Opera userjs..."
     USERJS_DIR="/jci/opera/opera_dir/userjs"
-    MENU_SRC="$USB/tweaks-manager/jci-app/tweaks-menu.js"
-    if [ -f "$MENU_SRC" ]; then
-        mkdir -p "$USERJS_DIR"
-        cp "$MENU_SRC" "$USERJS_DIR/tweaks-menu.js"
-        log "[4/5] tweaks-menu.js deployed to $USERJS_DIR"
+    USERJS_SRC="$USB/tweaks-manager/jci-app/tweaks-menu.js"
+    mkdir -p "$USERJS_DIR"
+    if [ -f "$USERJS_SRC" ]; then
+        cp "$USERJS_SRC" "$USERJS_DIR/tweaks-menu.js"
+        log "[4/5] tweaks-menu.js deployed"
     else
         log "[4/5] WARN: tweaks-menu.js not found on USB"
     fi
-    # Remove old index.html injections if present (caused boot loop)
+    # Clean up old bootstrap/app approach (now using overlay button)
+    rm -f "$USERJS_DIR/tweaks-bootstrap.js"
+    rm -f "$USERJS_DIR/tweaksApp.js"
+    # Enable User JavaScript in Opera
+    OPERA_INI="/jci/opera/opera_home/opera.ini"
+    if [ -f "$OPERA_INI" ]; then
+        if grep -q "User JavaScript=0" "$OPERA_INI" 2>/dev/null; then
+            sed -i "s/User JavaScript=0/User JavaScript=1/" "$OPERA_INI"
+            log "[4/5] User JavaScript enabled in opera.ini"
+        elif ! grep -q "User JavaScript=1" "$OPERA_INI" 2>/dev/null; then
+            sed -i '/\[User Prefs\]/a User JavaScript=1' "$OPERA_INI"
+            log "[4/5] User JavaScript=1 added to opera.ini"
+        else
+            log "[4/5] User JavaScript already enabled"
+        fi
+    else
+        log "[4/5] WARN: opera.ini not found"
+    fi
+    # Clean up legacy wizard UI
+    rm -rf /data_persist/tweaks/wizard
+    rm -f /data_persist/tweaks/.wizard_state
+    # Clean up legacy index.html injections
     if grep -q '_tweaks/' /jci/gui/index.html 2>/dev/null; then
         sed -i '/_tweaks\/tweaks-bootstrap.js/d' /jci/gui/index.html
         sed -i '/_tweaks\/tweaksApp.js/d' /jci/gui/index.html
@@ -206,13 +273,11 @@ STAGE2EOF
 
     # ── Finalize ────────────────────────────────────────────────────
     log "[5/5] Finalizing..."
-    echo "installed" > /data_persist/tweaks/tweaksd_installed
-    echo "$VERSION" >> /data_persist/tweaks/tweaksd_installed
-    echo "$(date "+%Y-%m-%d %H:%M:%S" 2>/dev/null)" >> /data_persist/tweaks/tweaksd_installed
+    { echo "installed"; echo "$VERSION"; echo "$(date "+%Y-%m-%d %H:%M:%S" 2>/dev/null)"; } > /tmp/tweaksd_installed.tmp
+    mv /tmp/tweaksd_installed.tmp /data_persist/tweaks/tweaksd_installed
 
-    # Start daemon now
-    /data_persist/tweaks/tweaksd &
-    log "[5/5] daemon started (PID $!)"
+    # No permanent daemon — tweaksd started by USB trigger only
+    log "[5/5] daemon binary ready (started on USB insert)"
 
     # ── Verify ──────────────────────────────────────────────────────
     sync
@@ -230,43 +295,70 @@ STAGE2EOF
         log "daemon binary: MISSING"
     fi
     if grep -q "tweaksd" /jci/scripts/stage_2.sh 2>/dev/null; then
-        log "boot autostart: OK (stage_2.sh)"
+        log "boot autostart: FOUND (should not be there — temp server only)"
     else
-        log "boot autostart: MISSING"
+        log "boot autostart: clean (temp server mode)"
     fi
     if [ -f /jci/opera/opera_dir/userjs/tweaks-menu.js ]; then
-        log "tweaks-menu.js: OK"
+        log "popup (userjs): OK"
     else
-        log "tweaks-menu.js: MISSING"
+        log "popup (userjs): MISSING"
     fi
 
     log "=== install complete ==="
+
+    # ── Show result on head unit ────────────────────────────────────
+    sleep 2
+    /jci/tools/jci-dialog \
+        --info \
+        --title="Tweaks Manager" \
+        --text="Installed! Reboot to activate.\nInsert USB again to manage tweaks." \
+        --ok-label="OK" &
 }
 
 # ═══════════════════════════════════════════════════════════════════
 #  UNINSTALL
 # ═══════════════════════════════════════════════════════════════════
 do_uninstall() {
-    log "[1/4] Stopping daemon..."
+    log "[1/5] Stopping daemon..."
     killall tweaksd 2>/dev/null
-    log "[1/4] daemon stopped"
+    # Close firewall ports opened by tweaksd (wlan0 only)
+    iptables -D INPUT -i wlan0 -p tcp --dport 8035 -j ACCEPT 2>/dev/null
+    iptables -D INPUT -i wlan0 -p tcp --dport 22 -j ACCEPT 2>/dev/null
+    log "[1/5] daemon stopped, firewall ports closed"
 
-    log "[2/4] Cleaning userjs..."
-    rm -f /jci/opera/opera_dir/userjs/tweaks-menu.js
+    log "[2/5] Cleaning UI files..."
+    # Keep tweaks-menu.js — lightweight popup, needed for re-install from USB
     rm -f /jci/opera/opera_dir/userjs/tweaks-bootstrap.js
     rm -f /jci/opera/opera_dir/userjs/tweaksApp.js
-    log "[2/4] userjs removed"
+    log "[2/5] legacy userjs removed (popup kept for re-install)"
+    # Legacy wizard cleanup
+    rm -rf /data_persist/tweaks/wizard
+    rm -f /data_persist/tweaks/.wizard_state
+    log "[2/5] wizard UI removed (legacy)"
 
-    log "[3/4] Removing boot autostart..."
+    log "[3/5] Removing boot autostart..."
     STAGE2="/jci/scripts/stage_2.sh"
     STAGE2_BAK="/data_persist/tweaks/backups/_stage_2.sh"
-    if [ -f "$STAGE2_BAK" ]; then
-        cp -a "$STAGE2_BAK" "$STAGE2"
-        log "[3/4] stage_2.sh restored from backup"
+    # Primary: surgical removal by markers
+    if grep -q '# tweaks:tweaksd-autostart:begin' "$STAGE2" 2>/dev/null; then
+        if [ -f "$PATCH_LIB" ]; then
+            . "$PATCH_LIB"
+            patch_begin "$STAGE2"
+            patch_remove_block "tweaks:tweaksd-autostart" "tweaksd boot autostart"
+            patch_commit
+        else
+            awk '/# tweaks:tweaksd-autostart:begin/{skip=1;next} /# tweaks:tweaksd-autostart:end/{skip=0;next} !skip' \
+                "$STAGE2" > "$STAGE2.tmp" && mv "$STAGE2.tmp" "$STAGE2"
+        fi
+        log "[3/5] tweaksd block removed from stage_2.sh"
+    # Fallback: legacy unmarked block — awk removes whole subshell safely
     elif grep -q "tweaksd" "$STAGE2" 2>/dev/null; then
-        sed -i '/# Tweaks Manager/,/^) &$/d' "$STAGE2"
-        sed -i '/tweaksd/d' "$STAGE2"
-        log "[3/4] removed tweaksd from stage_2.sh (no backup)"
+        awk '/# Tweaks Manager/{skip=1;next} skip && /^\) &/{skip=0;next} skip{next} /tweaksd/{next} {print}' \
+            "$STAGE2" > "$STAGE2.tmp" && mv "$STAGE2.tmp" "$STAGE2"
+        log "[3/5] removed tweaksd from stage_2.sh (legacy)"
+    else
+        log "[3/5] tweaksd not found in stage_2.sh, nothing to remove"
     fi
 
     # Legacy autorun cleanup
@@ -274,15 +366,15 @@ do_uninstall() {
     if [ -f "$AUTORUN" ] && grep -q "tweaksd" "$AUTORUN" 2>/dev/null; then
         sed -i '/# Tweaks Manager daemon/d' "$AUTORUN"
         sed -i '/tweaksd/d' "$AUTORUN"
-        log "[3/4] cleaned up legacy autorun"
+        log "[3/5] cleaned up legacy autorun"
     fi
 
     # Legacy sm.conf cleanup
     for SM in /jci/sm/sm.conf /jci/sm/sm_WCP.conf; do
         [ -f "$SM" ] || continue
         if grep -q "tweaksd" "$SM"; then
-            sed -i '/<service.*name="tweaksd"/,/<\/service>/d' "$SM"
-            log "[3/4] removed tweaksd service from $SM"
+            awk '/<service.*name="tweaksd"/{skip=1} /<\/service>/{if(skip){skip=0;next}} !skip' "$SM" > "$SM.tmp" && mv "$SM.tmp" "$SM"
+            log "[3/5] removed tweaksd service from $SM"
         fi
     done
 
@@ -291,13 +383,52 @@ do_uninstall() {
         sed -i '/_tweaks\/tweaks-bootstrap.js/d' /jci/gui/index.html
         sed -i '/_tweaks\/tweaksApp.js/d' /jci/gui/index.html
         rm -rf /jci/gui/apps/_tweaks
-        log "[3/4] removed legacy index.html injections"
+        log "[3/5] removed legacy index.html injections"
     fi
 
-    log "[4/4] Removing daemon..."
+    log "[4/5] Removing SSH tweaks..."
+    STAGE_WIFI="/jci/scripts/stage_wifi.sh"
+    # Primary: surgical removal by markers (preserves wifi-ap-autostart etc.)
+    if grep -q '# tweaks:ssh-safety:begin' "$STAGE_WIFI" 2>/dev/null && [ -f "$PATCH_LIB" ]; then
+        . "$PATCH_LIB"
+        patch_begin "$STAGE_WIFI"
+        patch_remove_block "tweaks:ssh-safety" "sshd autostart in stage_wifi.sh"
+        patch_commit
+        log "[4/5] SSH block removed from stage_wifi.sh (marker-based)"
+    # Fallback: old-style marker without begin/end (dangerous: '/marker/,$d' can eat EOF)
+    elif grep -q '# tweaks:ssh-access' "$STAGE_WIFI" 2>/dev/null; then
+        # Only delete the marker line and the sshd line, NOT everything to EOF
+        sed -i '/# tweaks:ssh-access/d' "$STAGE_WIFI" 2>/dev/null
+        sed -i '/sshd_tweaks\.conf/d' "$STAGE_WIFI" 2>/dev/null
+        log "[4/5] removed ssh-access from stage_wifi.sh (legacy, line-by-line)"
+    fi
+    # Stop tweaks sshd (port 22), leave factory sshd (port 36000) alone
+    if [ -f /var/run/sshd_tweaks.pid ]; then
+        kill "$(cat /var/run/sshd_tweaks.pid)" 2>/dev/null
+        rm -f /var/run/sshd_tweaks.pid
+    fi
+    rm -f /data_persist/tweaks/sshd_tweaks.conf
+    # Restore /etc/passwd — try symlink to stock, fall back to known sources
+    if [ ! -f /etc/passwd ] && [ ! -L /etc/passwd ]; then
+        # /etc/passwd is completely missing (broken install) — recover it
+        if [ -f /config-mfg/passwd ]; then
+            ln -s /config-mfg/passwd /etc/passwd
+            log "[4/5] restored /etc/passwd symlink (was missing)"
+        else
+            # No stock source found; create a minimal passwd so the system boots
+            echo "root:x:0:0:root:/root:/bin/sh" > /etc/passwd
+            log "[4/5] WARN: created minimal /etc/passwd (no stock source found)"
+        fi
+    elif [ -f /config-mfg/passwd ] && [ ! -L /etc/passwd ]; then
+        ln -sf /config-mfg/passwd /etc/passwd
+        log "[4/5] restored /etc/passwd symlink"
+    fi
+    log "[4/5] SSH tweaks removed (factory sshd untouched)"
+
+    log "[5/5] Removing daemon..."
     rm -f /data_persist/tweaks/tweaksd
     rm -f /data_persist/tweaks/tweaksd_installed
-    log "[4/4] daemon and marker removed"
+    log "[5/5] daemon and marker removed"
 
     # ── Verify ──────────────────────────────────────────────────────
     sync
@@ -318,6 +449,15 @@ do_uninstall() {
         log "boot autostart: STILL EXISTS (bad)"
     else
         log "boot autostart: removed OK"
+    fi
+    if [ -f /jci/opera/opera_dir/userjs/tweaks-menu.js ]; then
+        log "popup (userjs): kept (for re-install)"
+    fi
+    if grep -q 'tweaks:ssh-safety' /jci/scripts/stage_wifi.sh 2>/dev/null || \
+       grep -q 'tweaks:ssh-access' /jci/scripts/stage_wifi.sh 2>/dev/null; then
+        log "SSH autostart: STILL EXISTS (bad)"
+    else
+        log "SSH autostart: removed OK"
     fi
 
     log "=== uninstall complete ==="

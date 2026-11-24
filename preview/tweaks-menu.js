@@ -666,7 +666,7 @@
 
         if (t.installed) {
             if (t.update_available && t.has_source) {
-                btnArea.appendChild(makeActionBtn('UPDATE', CYAN, t, 'install'));
+                btnArea.appendChild(makeActionBtn('UPDATE', CYAN, t, 'update'));
                 btnArea.appendChild(mkEl('span', { display: 'inline-block', width: '8px' }));
             }
             btnArea.appendChild(makeActionBtn('UNINSTALL', RED, t, 'uninstall'));

@@ -47,9 +47,9 @@ int tweaksd_log_read(char *out, int outlen, int last_n) {
         return 0;
     }
 
-    char lines[512][256];
+    char lines[128][256];
     int total = 0;
-    while (total < 512 && fgets(lines[total % 512], sizeof(lines[0]), f))
+    while (total < 128 && fgets(lines[total % 128], sizeof(lines[0]), f))
         total++;
     fclose(f);
 
@@ -58,13 +58,13 @@ int tweaksd_log_read(char *out, int outlen, int last_n) {
 
     int pos = snprintf(out, outlen, "{\"log\":[");
     for (int i = start; i < total && pos < outlen - 300; i++) {
-        lines[i % 512][strcspn(lines[i % 512], "\n\r")] = '\0';
+        lines[i % 128][strcspn(lines[i % 128], "\n\r")] = '\0';
         char esc[512];
         int ej = 0;
-        for (int c = 0; lines[i % 512][c] && ej < (int)sizeof(esc) - 2; c++) {
-            if (lines[i % 512][c] == '"' || lines[i % 512][c] == '\\')
+        for (int c = 0; lines[i % 128][c] && ej < (int)sizeof(esc) - 2; c++) {
+            if (lines[i % 128][c] == '"' || lines[i % 128][c] == '\\')
                 esc[ej++] = '\\';
-            esc[ej++] = lines[i % 512][c];
+            esc[ej++] = lines[i % 128][c];
         }
         esc[ej] = '\0';
         if (i > start) out[pos++] = ',';

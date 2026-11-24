@@ -225,12 +225,17 @@ prepare_usb() {
   cp "$DIR/tweaksd/tweaksd" "$USB/tweaks-manager/installer/tweaksd" || { err "copy failed"; return 1; }
   chmod 755 "$USB/tweaks-manager/installer/tweaksd"
   ok "  tweaksd binary: $(wc -c < "$USB/tweaks-manager/installer/tweaksd" | tr -d ' ') bytes"
+  mkdir -p "$USB/tweaks-manager/lib"
+  cp "$DIR/lib/patch.sh" "$USB/tweaks-manager/lib/patch.sh" || { err "copy patch.sh failed"; return 1; }
+  ok "  patch.sh"
 
-  info "4/5 · JCI app (userjs)"
+  cp "$DIR/VERSION" "$USB/tweaks-manager/VERSION" || { err "copy VERSION failed"; return 1; }
+  ok "  VERSION $(cat "$DIR/VERSION" | tr -d '[:space:]')"
+
+  info "4/5 · Settings icon (userjs)"
   mkdir -p "$USB/tweaks-manager/jci-app"
-  cp "$DIR/jci-app/tweaks-bootstrap.js" "$USB/tweaks-manager/jci-app/" || { err "copy failed"; return 1; }
-  cp "$DIR/jci-app/tweaksApp.js" "$USB/tweaks-manager/jci-app/" || { err "copy failed"; return 1; }
-  ok "  bootstrap + app JS"
+  cp "$DIR/jci-app/tweaks-menu.js" "$USB/tweaks-manager/jci-app/" || { err "copy failed"; return 1; }
+  ok "  tweaks-menu.js"
 
   info "5/5 · tweaks"
   mkdir -p "$USB/tweaks-manager/tweaks"
@@ -257,15 +262,17 @@ prepare_usb() {
   info "verifying..."
   local problems=0
   for f in tweaks.sh tweaks-manager/installer/tweaksd \
-           tweaks-manager/jci-app/tweaks-bootstrap.js \
-           tweaks-manager/jci-app/tweaksApp.js; do
+           tweaks-manager/jci-app/tweaks-menu.js \
+           tweaks-manager/lib/patch.sh \
+           tweaks-manager/VERSION; do
     if [ -f "$USB/$f" ]; then
       local src_md5 dst_md5
       case "$f" in
         tweaks.sh)                               src_md5=$(md5 -q "$DIR/installer/tweaks.sh" 2>/dev/null) ;;
         tweaks-manager/installer/tweaksd)        src_md5=$(md5 -q "$DIR/tweaksd/tweaksd" 2>/dev/null) ;;
-        tweaks-manager/jci-app/tweaks-bootstrap.js) src_md5=$(md5 -q "$DIR/jci-app/tweaks-bootstrap.js" 2>/dev/null) ;;
-        tweaks-manager/jci-app/tweaksApp.js)     src_md5=$(md5 -q "$DIR/jci-app/tweaksApp.js" 2>/dev/null) ;;
+        tweaks-manager/jci-app/tweaks-menu.js)   src_md5=$(md5 -q "$DIR/jci-app/tweaks-menu.js" 2>/dev/null) ;;
+        tweaks-manager/lib/patch.sh)             src_md5=$(md5 -q "$DIR/lib/patch.sh" 2>/dev/null) ;;
+        tweaks-manager/VERSION)                  src_md5=$(md5 -q "$DIR/VERSION" 2>/dev/null) ;;
       esac
       dst_md5=$(md5 -q "$USB/$f" 2>/dev/null)
       if [ "$src_md5" = "$dst_md5" ]; then
@@ -346,14 +353,17 @@ ssh_deploy() {
   $SSH 'mount -o remount,rw /' || { err "remount failed"; return 1; }
 
   info "2/5 · tweaksd daemon"
-  $SSH 'mkdir -p /data_persist/tweaks/installed /data_persist/tweaks/backups /data_persist/tweaks/scripts'
+  $SSH 'mkdir -p /data_persist/tweaks/installed /data_persist/tweaks/backups /data_persist/tweaks/scripts /data_persist/tweaks/lib'
   push_file "$DIR/tweaksd/tweaksd" "/data_persist/tweaks/tweaksd" || problems=$((problems+1))
   $SSH 'chmod 755 /data_persist/tweaks/tweaksd'
+  push_file "$DIR/lib/patch.sh" "/data_persist/tweaks/lib/patch.sh" || problems=$((problems+1))
+  $SSH 'chmod 755 /data_persist/tweaks/lib/patch.sh'
 
-  info "3/5 · Opera userjs"
+  info "3/5 · Opera userjs (settings icon)"
   $SSH 'mkdir -p /jci/opera/opera_dir/userjs'
-  push_file "$DIR/jci-app/tweaks-bootstrap.js" "/jci/opera/opera_dir/userjs/tweaks-bootstrap.js" || problems=$((problems+1))
-  push_file "$DIR/jci-app/tweaksApp.js" "/jci/opera/opera_dir/userjs/tweaksApp.js" || problems=$((problems+1))
+  push_file "$DIR/jci-app/tweaks-menu.js" "/jci/opera/opera_dir/userjs/tweaks-menu.js" || problems=$((problems+1))
+  # Clean up old bootstrap/app approach
+  $SSH 'rm -f /jci/opera/opera_dir/userjs/tweaks-bootstrap.js /jci/opera/opera_dir/userjs/tweaksApp.js'
   $SSH '
     INI=/jci/opera/opera_home/opera.ini
     if grep -q "User JavaScript=0" "$INI" 2>/dev/null; then
@@ -363,34 +373,72 @@ ssh_deploy() {
     fi
   '
 
-  info "4/5 · autorun"
+  info "4/5 · boot autostart (stage_2.sh)"
   $SSH '
-    mkdir -p /data_persist/dev/bin
-    AUTORUN=/data_persist/dev/bin/autorun
-    [ -f "$AUTORUN" ] || { echo "#!/bin/sh" > "$AUTORUN"; chmod 755 "$AUTORUN"; }
-    grep -q "tweaksd" "$AUTORUN" || cat >> "$AUTORUN" << "EOF"
+    STAGE2="/jci/scripts/stage_2.sh"
+    if [ -f "$STAGE2" ]; then
+      if grep -q "# tweaks:tweaksd-autostart:begin" "$STAGE2"; then
+        echo "    tweaksd already in stage_2.sh"
+      else
+        # Clean up old unmarked tweaksd block first
+        if grep -q "tweaksd" "$STAGE2" 2>/dev/null; then
+          sed -i "/# Tweaks Manager/d" "$STAGE2" 2>/dev/null
+          sed -i "/tweaksd/d" "$STAGE2" 2>/dev/null
+          echo "    cleaned old unmarked tweaksd block"
+        fi
+        PLIB="/data_persist/tweaks/lib/patch.sh"
+        if [ -f "$PLIB" ]; then
+          . "$PLIB"
+          patch_begin "$STAGE2"
+          patch_append_block "tweaks:tweaksd-autostart" '"'"'(
+    sleep 12
+    if [ -x /data_persist/tweaks/tweaksd ]; then
+        /data_persist/tweaks/tweaksd &
+    fi
+) &'"'"'
+          patch_commit
+        else
+          cat >> "$STAGE2" << "STAGE2EOF"
 
-# Tweaks Manager daemon
-sleep 10
-if [ -x /data_persist/tweaks/tweaksd ]; then
-    /data_persist/tweaks/tweaksd &
-fi
-EOF
+# tweaks:tweaksd-autostart:begin
+(
+    sleep 12
+    if [ -x /data_persist/tweaks/tweaksd ]; then
+        /data_persist/tweaks/tweaksd &
+    fi
+) &
+# tweaks:tweaksd-autostart:end
+STAGE2EOF
+        fi
+        echo "    added tweaksd to stage_2.sh"
+      fi
+    else
+      echo "    WARN: stage_2.sh not found"
+    fi
+    # Clean up legacy autorun
+    if [ -f /data_persist/dev/bin/autorun ] && grep -q "tweaksd" /data_persist/dev/bin/autorun; then
+      sed -i "/tweaksd/d" /data_persist/dev/bin/autorun
+      sed -i "/# Tweaks Manager daemon/d" /data_persist/dev/bin/autorun
+      echo "    cleaned up legacy autorun"
+    fi
   '
 
   info "5/5 · cleanup + finalize"
-  $SSH '
+  local ver
+  ver=$(cat "$DIR/VERSION" 2>/dev/null | tr -d '[:space:]')
+  ver="${ver:-0.0.0}"
+  $SSH "
     # Legacy cleanup
-    sed -i "/_tweaks\//d" /jci/gui/index.html 2>/dev/null
+    sed -i '/_tweaks\//d' /jci/gui/index.html 2>/dev/null
     rm -rf /jci/gui/apps/_tweaks 2>/dev/null
     for SM in /jci/sm/sm.conf /jci/sm/sm_WCP.conf; do
-      [ -f "$SM" ] && sed -i "/<service.*name=\"tweaksd\"/,/<\/service>/d" "$SM" 2>/dev/null
+      [ -f \"\$SM\" ] && awk '/<service.*name=\"tweaksd\"/{skip=1} /<\\/service>/{if(skip){skip=0;next}} !skip' \"\$SM\" > \"\$SM.tmp\" && mv \"\$SM.tmp\" \"\$SM\"
     done
-    echo "installed" > /data_persist/tweaks/tweaksd_installed
-    echo "0.1.0" >> /data_persist/tweaks/tweaksd_installed
-    date "+%Y-%m-%d %H:%M:%S" >> /data_persist/tweaks/tweaksd_installed
+    echo 'installed' > /data_persist/tweaks/tweaksd_installed
+    echo '$ver' >> /data_persist/tweaks/tweaksd_installed
+    date '+%Y-%m-%d %H:%M:%S' >> /data_persist/tweaks/tweaksd_installed
     mount -o remount,ro / 2>/dev/null; sync
-  '
+  "
 
   if [ "$problems" -eq 0 ]; then
     ok "deploy complete"
@@ -402,7 +450,7 @@ EOF
     if echo "$api" | grep -q "version"; then
       ok "API: $api"
     fi
-    info "reboot CMU (option 5) to load userjs into Applications menu"
+    info "reboot CMU (option 5) to load tweaks-menu.js into Settings"
   else
     err "$problems problem(s) during deploy"
   fi
@@ -419,12 +467,17 @@ ssh_validate() {
     echo "  running: $(pgrep tweaksd | wc -l)"
     echo "  API: $(wget -q -O- http://127.0.0.1:8035/api/version 2>/dev/null || curl -s http://127.0.0.1:8035/api/version 2>/dev/null || echo FAIL)"
     echo
-    echo "── userjs ──"
+    echo "── userjs (settings icon) ──"
     echo "  User JavaScript: $(grep "User JavaScript" /jci/opera/opera_home/opera.ini 2>/dev/null)"
-    ls -la /jci/opera/opera_dir/userjs/tweaks*.js 2>/dev/null | sed "s/^/  /" || echo "  MISSING"
+    ls -la /jci/opera/opera_dir/userjs/tweaks-menu.js 2>/dev/null | sed "s/^/  /" || echo "  MISSING"
     echo
-    echo "── autorun ──"
-    grep tweaksd /data_persist/dev/bin/autorun 2>/dev/null | sed "s/^/  /" || echo "  NOT IN AUTORUN"
+    echo "── boot autostart ──"
+    if grep -q "tweaksd" /jci/scripts/stage_2.sh 2>/dev/null; then
+      echo "  stage_2.sh: OK"
+    else
+      echo "  stage_2.sh: NOT FOUND"
+    fi
+    grep tweaksd /data_persist/dev/bin/autorun 2>/dev/null | sed "s/^/  (legacy autorun) /" || true
     echo
     echo "── install ──"
     cat /data_persist/tweaks/tweaksd_installed 2>/dev/null | sed "s/^/  /" || echo "  NOT INSTALLED"

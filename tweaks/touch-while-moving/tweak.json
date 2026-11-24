@@ -1,7 +1,7 @@
 {
   "id": "touch-while-moving",
   "name": "Touchscreen While Moving",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Enables touchscreen input at any speed",
   "author": "Tweaks Manager",
   "min_firmware": "74.00.324",
