@@ -264,13 +264,14 @@ ver_newer() {
 
 # ── Manage menu (already installed) ────────────────────────────────
 show_manage_menu() {
-    "$DLG" --question --title "$TITLE" \
+    "$DLG" --3-button-dialog --title "$TITLE" \
         --text "Tweaks Manager v$INST_VER\nFirmware: $FW" \
-        --ok-label "Reinstall" --cancel-label "Uninstall"
-    if [ $? -eq 0 ]; then
+        --ok-label "Reinstall" --cancel-label "Uninstall" --button3-label "Close"
+    RC=$?
+    if [ $RC -eq 0 ]; then
         log "User chose: Reinstall"
         run_installer install
-    else
+    elif [ $RC -eq 1 ]; then
         log "User chose: Uninstall path"
         "$DLG" --question --title "$TITLE" \
             --text "Remove Tweaks Manager?\n\nUninstall tweaks first via the app." \
@@ -281,20 +282,25 @@ show_manage_menu() {
         else
             log "User cancelled uninstall"
         fi
+    else
+        log "User closed manage menu"
     fi
 }
 
 # ── Start temp tweaksd server ───────────────────────────────────────
 TWEAKSD_PID=""
 start_temp_tweaksd() {
+    if killall -0 tweaksd 2>/dev/null; then
+        log "tweaksd already running (permanent daemon), skipping temp server"
+        panel "tweaksd running"
+        return
+    fi
     TWEAKSD_USB="$MYDIR/tweaks-manager/installer/tweaksd"
     TWEAKSD_INST="/data_persist/tweaks/tweaksd"
     DAEMON=""
     [ -x "$TWEAKSD_USB" ] && DAEMON="$TWEAKSD_USB"
     [ -z "$DAEMON" ] && [ -x "$TWEAKSD_INST" ] && DAEMON="$TWEAKSD_INST"
     if [ -n "$DAEMON" ]; then
-        killall tweaksd 2>/dev/null
-        sleep 1
         "$DAEMON" -f </dev/null >/dev/null 2>&1 &
         TWEAKSD_PID=$!
         sleep 1
@@ -320,19 +326,18 @@ if [ -f /data_persist/tweaks/tweaksd_installed ]; then
     if ver_newer "$VERSION" "$INST_VER"; then
         log "Update available: v$INST_VER -> v$VERSION"
 
-        "$DLG" --question --title "$TITLE" \
+        "$DLG" --3-button-dialog --title "$TITLE" \
             --text "Update available!\n\nInstalled: v$INST_VER\nOn USB: v$VERSION\n\nFirmware: $FW" \
-            --ok-label "Update" --cancel-label "Skip"
-        if [ $? -eq 0 ]; then
+            --ok-label "Update" --cancel-label "Manage" --button3-label "Close"
+        RC=$?
+        if [ $RC -eq 0 ]; then
             log "User chose: Update v$INST_VER -> v$VERSION"
             run_installer install
-        else
-            log "User skipped update"
-            "$DLG" --question --title "$TITLE" \
-                --text "Tweaks Manager v$INST_VER\nFirmware: $FW" \
-                --ok-label "Manage" --cancel-label "Close"
-            if [ $? -ne 0 ]; then log "User closed"; exit 0; fi
+        elif [ $RC -eq 1 ]; then
+            log "User chose: Manage"
             show_manage_menu
+        else
+            log "User closed"
         fi
     else
         log "Up to date v$INST_VER"

@@ -195,35 +195,37 @@ SSHPATCH
         fi
     done
 
-    # ── Clean up any boot autostart (no permanent daemon) ──────────
-    log "[3/5] Removing boot autostart (temp server only)..."
+    # ── Boot autostart (permanent daemon) ─────────────────────────────
+    log "[3/5] Setting up boot autostart..."
     STAGE2="/jci/scripts/stage_2.sh"
     STAGE2_BAK="/data_persist/tweaks/backups/_stage_2.sh"
-    if grep -q '# tweaks:tweaksd-autostart:begin' "$STAGE2" 2>/dev/null; then
+    if ! grep -q '# tweaks:tweaksd-autostart:begin' "$STAGE2" 2>/dev/null; then
         if [ ! -f "$STAGE2_BAK" ]; then
             cp -a "$STAGE2" "$STAGE2_BAK"
+        fi
+        # Remove any legacy unmarked tweaksd lines first
+        if grep -q "tweaksd" "$STAGE2" 2>/dev/null; then
+            awk '/# Tweaks Manager/{skip=1;next} skip && /^\) &/{skip=0;next} skip{next} {print}' \
+                "$STAGE2" > "$STAGE2.tmp" && mv "$STAGE2.tmp" "$STAGE2"
+            sed -i '/^[[:space:]]*\/data_persist\/tweaks\/tweaksd/d' "$STAGE2"
+            log "[3/5] cleaned up legacy unmarked tweaksd lines"
         fi
         if [ -f "$PATCH_LIB" ]; then
             . "$PATCH_LIB"
             patch_begin "$STAGE2"
-            patch_remove_block "tweaks:tweaksd-autostart" "tweaksd boot autostart"
+            patch_append_block "tweaks:tweaksd-autostart" '/data_persist/tweaks/tweaksd 2>/dev/null' "tweaksd boot autostart"
             patch_commit
         else
-            awk '/# tweaks:tweaksd-autostart:begin/{skip=1;next} /# tweaks:tweaksd-autostart:end/{skip=0;next} !skip' \
-                "$STAGE2" > "$STAGE2.tmp" && mv "$STAGE2.tmp" "$STAGE2"
+            cat >> "$STAGE2" << 'AUTOSTART'
+
+# tweaks:tweaksd-autostart:begin
+/data_persist/tweaks/tweaksd 2>/dev/null
+# tweaks:tweaksd-autostart:end
+AUTOSTART
         fi
-        log "[3/5] removed old boot autostart"
-    elif grep -q "tweaksd" "$STAGE2" 2>/dev/null; then
-        if [ ! -f "$STAGE2_BAK" ]; then
-            cp -a "$STAGE2" "$STAGE2_BAK"
-        fi
-        awk '/# Tweaks Manager/{skip=1;next} skip && /^\) &/{skip=0;next} skip{next} {print}' \
-            "$STAGE2" > "$STAGE2.tmp" && mv "$STAGE2.tmp" "$STAGE2"
-        # Remove any remaining standalone tweaksd launch lines (outside block)
-        sed -i '/^[[:space:]]*\/data_persist\/tweaks\/tweaksd/d' "$STAGE2"
-        log "[3/5] removed legacy tweaksd from stage_2.sh"
+        log "[3/5] boot autostart added to stage_2.sh"
     else
-        log "[3/5] no boot autostart found, clean"
+        log "[3/5] boot autostart already present"
     fi
 
     # Legacy autorun cleanup
@@ -278,8 +280,7 @@ SSHPATCH
     { echo "installed"; echo "$VERSION"; echo "$(date "+%Y-%m-%d %H:%M:%S" 2>/dev/null)"; } > /tmp/tweaksd_installed.tmp
     mv /tmp/tweaksd_installed.tmp /data_persist/tweaks/tweaksd_installed
 
-    # No permanent daemon — tweaksd started by USB trigger only
-    log "[5/5] daemon binary ready (started on USB insert)"
+    log "[5/5] daemon ready (permanent, starts on boot)"
 
     # ── Verify ──────────────────────────────────────────────────────
     sync
@@ -297,9 +298,9 @@ SSHPATCH
         log "daemon binary: MISSING"
     fi
     if grep -q "tweaksd" /jci/scripts/stage_2.sh 2>/dev/null; then
-        log "boot autostart: FOUND (should not be there — temp server only)"
+        log "boot autostart: OK"
     else
-        log "boot autostart: clean (temp server mode)"
+        log "boot autostart: MISSING"
     fi
     if [ -f /jci/opera/opera_dir/userjs/tweaks-menu.js ]; then
         log "popup (userjs): OK"
@@ -314,7 +315,7 @@ SSHPATCH
     /jci/tools/jci-dialog \
         --info \
         --title="Tweaks Manager" \
-        --text="Installed! Reboot to activate.\nInsert USB again to manage tweaks." \
+        --text="Installed! Reboot to activate." \
         --ok-label="OK" &
 }
 
