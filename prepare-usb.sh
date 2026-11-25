@@ -51,11 +51,11 @@ else
   done
 fi
 if [ $_SRC_NEWER -eq 1 ]; then
-  info "tweaksd source changed — rebuilding..."
+  info "tweaksd source changed — rebuilding v${VERSION}..."
   if make -C "$DIR/tweaksd" clean all 2>&1 | sed 's/^/    /'; then
     cp "$DIR/tweaksd/tweaksd" "$DIR/installer/tweaksd"
     chmod 755 "$DIR/installer/tweaksd"
-    ok "tweaksd rebuilt and copied to installer/"
+    ok "tweaksd v${VERSION} rebuilt and copied to installer/"
   else
     err "tweaksd build failed"
     exit 1
