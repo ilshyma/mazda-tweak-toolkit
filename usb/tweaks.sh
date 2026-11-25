@@ -20,6 +20,38 @@ LOCKDIR="/tmp/tweaks-manager.lock"
 hwclock --hctosys 2>/dev/null
 echo 1 > "/sys/class/gpio/Watchdog Disable/value" 2>/dev/null
 
+# ── Emergency network recovery (runs every USB insert) ─────────────
+_RLOG="$MYDIR/_recovery.log"
+echo "=== recovery $(date) ===" > "$_RLOG" 2>/dev/null
+mount -o remount,rw / 2>>"$_RLOG"
+rm -f /etc/passwd 2>/dev/null
+cat > /etc/passwd << 'PW'
+root:x:0:0:root:/root:/bin/sh
+cmu:$5$c1skCppC7Giw5U9e$ybU6cVGn2tU60UaVcMTWSJ62QQRQjUtZCnVyHMiAkYA:0:0:root:/root:/bin/sh
+sshd:x:74:74:sshd:/var/empty/sshd:/sbin/nologin
+service:x:1001:1001:Service User:/root:/bin/false
+hmi:x:1002:1002:HMI User:/root:/bin/false
+browser:x:1003:1003:Browser User:/root:/bin/false
+PW
+echo "passwd: $(ls -la /etc/passwd 2>&1)" >> "$_RLOG"
+mkdir -p /var/empty/sshd /tmp/ssh /etc/ssh 2>/dev/null
+[ ! -f /etc/ssh_host_rsa_key ] && ssh-keygen -t rsa -f /etc/ssh_host_rsa_key -N '' >>"$_RLOG" 2>&1
+[ ! -f /etc/ssh_host_dsa_key ] && ssh-keygen -t dsa -f /etc/ssh_host_dsa_key -N '' >>"$_RLOG" 2>&1
+[ ! -f /etc/ssh/ssh_host_rsa_key ] && cp /etc/ssh_host_rsa_key /etc/ssh/ 2>/dev/null
+[ ! -f /etc/ssh/ssh_host_dsa_key ] && cp /etc/ssh_host_dsa_key /etc/ssh/ 2>/dev/null
+mount -o remount,ro / 2>/dev/null
+iptables -F 2>/dev/null
+iptables -P INPUT ACCEPT 2>/dev/null
+/usr/sbin/sshd >>"$_RLOG" 2>&1
+_SSHD_RC=$?
+echo "sshd exit=$_SSHD_RC" >> "$_RLOG"
+if [ $_SSHD_RC -ne 0 ]; then
+    dropbear -p 22 -R >>"$_RLOG" 2>&1 || echo "dropbear failed too" >> "$_RLOG"
+fi
+/jci/scripts/jci-wifiap.sh start >>"$_RLOG" 2>&1
+echo "done ports: $(netstat -tlnp 2>/dev/null | grep -E ':22|:36000')" >> "$_RLOG"
+# ── End recovery ───────────────────────────────────────────────────
+
 # ── Parse firmware ──────────────────────────────────────────────────
 FW=$(grep '^JCI_SW_VER=' /jci/version.ini 2>/dev/null | cut -d'"' -f2 | sed 's/MAZ_CMU-150_//')
 : "${FW:=??}"
@@ -237,8 +269,13 @@ run_installer() {
 
     if [ $RC -eq 0 ]; then
         log "--- Installer finished OK ---"
-        result "OK" "Tweaks Manager ${ACTION}ed successfully." "" ""
-        finish "Tweaks Manager ${ACTION}ed."
+        if [ "$ACTION" = "install" ]; then
+            result "OK" "Tweaks Manager installed." "Backup files saved to USB." "Copy tweaks-manager/backup/ to your computer!"
+            finish "Tweaks Manager installed.\n\nIMPORTANT: Backup files are on the USB.\nCopy tweaks-manager/backup/ folder\nto your computer before formatting."
+        else
+            result "OK" "Tweaks Manager ${ACTION}ed successfully." "" ""
+            finish "Tweaks Manager ${ACTION}ed."
+        fi
     else
         ERRCODE=$(explain_failure $RC)
         log "--- Installer FAILED: exit $RC ($ERRCODE) ---"
@@ -356,7 +393,7 @@ else
     if [ $? -ne 0 ]; then log "User closed"; exit 0; fi
 
     "$DLG" --question --title "$TITLE" \
-        --text "Install Tweaks Manager?\n\n- Daemon on /data_persist\n- Autorun on boot\n\n$FACTS" \
+        --text "Install Tweaks Manager?\n\n- WiFi AP + SSH + iptables (permanent)\n- Daemon on /data_persist\n- System backup to USB\n\n$FACTS" \
         --ok-label "Install" --cancel-label "Cancel"
     if [ $? -eq 0 ]; then
         log "User confirmed install"

@@ -2,7 +2,7 @@ CC = zig cc
 TARGET = arm-linux-musleabi
 VERSION := $(shell cat ../VERSION 2>/dev/null || echo 0.0.0)
 CFLAGS = -target $(TARGET) -Os -Wall -Wextra -DNDEBUG -DVERSION=\"$(VERSION)\"
-LDFLAGS = -target $(TARGET) -static
+LDFLAGS = -target $(TARGET) -static -s
 
 SRCS = main.c httpd.c tweaks.c dump.c usb.c log.c jsmn.c
 OBJS = $(SRCS:.c=.o)

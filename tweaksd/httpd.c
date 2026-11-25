@@ -347,6 +347,10 @@ void httpd_run(void) {
                                &client_len);
         if (client_fd < 0) {
             if (errno == EINTR) continue;
+            if (errno == EMFILE || errno == ENFILE || errno == ENOMEM) {
+                usleep(100000);
+                continue;
+            }
             break;
         }
 

@@ -388,53 +388,68 @@ ssh_deploy() {
     fi
   '
 
-  info "4/5 · boot autostart (stage_2.sh)"
+  info "4/5 · boot autostart (stage_wifi.sh)"
   $SSH '
+    STAGE_WIFI="/jci/scripts/stage_wifi.sh"
     STAGE2="/jci/scripts/stage_2.sh"
-    if [ -f "$STAGE2" ]; then
-      if grep -q "# tweaks:tweaksd-autostart:begin" "$STAGE2"; then
-        echo "    tweaksd already in stage_2.sh"
+    # Migrate: remove old stage_2.sh block
+    if grep -q "# tweaks:tweaksd-autostart:begin" "$STAGE2" 2>/dev/null; then
+      PLIB="/data_persist/tweaks/lib/patch.sh"
+      if [ -f "$PLIB" ]; then
+        . "$PLIB"
+        patch_begin "$STAGE2"
+        patch_remove_block "tweaks:tweaksd-autostart" "migrate to stage_wifi"
+        patch_commit
       else
-        # Clean up old unmarked tweaksd block first
-        if grep -q "tweaksd" "$STAGE2" 2>/dev/null; then
-          sed -i "/# Tweaks Manager/d" "$STAGE2" 2>/dev/null
-          sed -i "/tweaksd/d" "$STAGE2" 2>/dev/null
-          echo "    cleaned old unmarked tweaksd block"
-        fi
+        awk "/# tweaks:tweaksd-autostart:begin/{skip=1;next} /# tweaks:tweaksd-autostart:end/{skip=0;next} !skip" \
+          "$STAGE2" > "$STAGE2.tmp" && mv "$STAGE2.tmp" "$STAGE2"
+      fi
+      echo "    migrated: removed tweaksd from stage_2.sh"
+    fi
+    if grep -q "tweaksd" "$STAGE2" 2>/dev/null; then
+      sed -i "/# Tweaks Manager/d" "$STAGE2" 2>/dev/null
+      sed -i "/tweaksd/d" "$STAGE2" 2>/dev/null
+      echo "    cleaned legacy tweaksd from stage_2.sh"
+    fi
+    # Add to stage_wifi.sh (alongside SSH)
+    if [ -f "$STAGE_WIFI" ]; then
+      if grep -q "# tweaks:tweaksd-autostart:begin" "$STAGE_WIFI"; then
+        echo "    tweaksd already in stage_wifi.sh"
+      else
         PLIB="/data_persist/tweaks/lib/patch.sh"
         if [ -f "$PLIB" ]; then
           . "$PLIB"
-          patch_begin "$STAGE2"
-          patch_append_block "tweaks:tweaksd-autostart" '"'"'(
-    sleep 12
-    if [ -x /data_persist/tweaks/tweaksd ]; then
-        /data_persist/tweaks/tweaksd &
-    fi
-) &'"'"'
+          patch_begin "$STAGE_WIFI"
+          patch_append_block "tweaks:tweaksd-autostart" '"'"'/data_persist/tweaks/tweaksd 2>/dev/null'"'"'
           patch_commit
         else
-          cat >> "$STAGE2" << "STAGE2EOF"
+          cat >> "$STAGE_WIFI" << "WIFIEOF"
 
 # tweaks:tweaksd-autostart:begin
-(
-    sleep 12
-    if [ -x /data_persist/tweaks/tweaksd ]; then
-        /data_persist/tweaks/tweaksd &
-    fi
-) &
+/data_persist/tweaks/tweaksd 2>/dev/null
 # tweaks:tweaksd-autostart:end
-STAGE2EOF
+WIFIEOF
         fi
-        echo "    added tweaksd to stage_2.sh"
+        echo "    added tweaksd to stage_wifi.sh"
       fi
     else
-      echo "    WARN: stage_2.sh not found"
+      echo "    WARN: stage_wifi.sh not found"
     fi
-    # Clean up legacy autorun
-    if [ -f /data_persist/dev/bin/autorun ] && grep -q "tweaksd" /data_persist/dev/bin/autorun; then
-      sed -i "/tweaksd/d" /data_persist/dev/bin/autorun
-      sed -i "/# Tweaks Manager daemon/d" /data_persist/dev/bin/autorun
-      echo "    cleaned up legacy autorun"
+    # Clean up legacy autorun (broken remnant from v1.3.1 uninstall bug)
+    AUTORUN="/data_persist/dev/bin/autorun"
+    if [ -f "$AUTORUN" ]; then
+      if grep -q "tweaksd" "$AUTORUN" 2>/dev/null; then
+        sed -i "/tweaksd/d" "$AUTORUN"
+        sed -i "/# Tweaks Manager daemon/d" "$AUTORUN"
+        echo "    cleaned tweaksd from autorun"
+      fi
+      LINES=$(grep -cv "^[[:space:]]*$" "$AUTORUN" 2>/dev/null || echo 0)
+      if [ "$LINES" -le 3 ]; then
+        CONTENT=$(grep -v "^[[:space:]]*$\|^#" "$AUTORUN" 2>/dev/null || true)
+        case "$CONTENT" in
+          *fi*|*sleep*|"") rm -f "$AUTORUN"; echo "    removed broken autorun" ;;
+        esac
+      fi
     fi
   '
 
@@ -487,10 +502,13 @@ ssh_validate() {
     ls -la /jci/opera/opera_dir/userjs/tweaks-menu.js 2>/dev/null | sed "s/^/  /" || echo "  MISSING"
     echo
     echo "── boot autostart ──"
-    if grep -q "tweaksd" /jci/scripts/stage_2.sh 2>/dev/null; then
-      echo "  stage_2.sh: OK"
+    if grep -q "tweaksd" /jci/scripts/stage_wifi.sh 2>/dev/null; then
+      echo "  stage_wifi.sh: OK"
     else
-      echo "  stage_2.sh: NOT FOUND"
+      echo "  stage_wifi.sh: NOT FOUND"
+    fi
+    if grep -q "tweaksd" /jci/scripts/stage_2.sh 2>/dev/null; then
+      echo "  stage_2.sh: LEGACY (should migrate)"
     fi
     grep tweaksd /data_persist/dev/bin/autorun 2>/dev/null | sed "s/^/  (legacy autorun) /" || true
     echo

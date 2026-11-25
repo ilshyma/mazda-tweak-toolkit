@@ -559,6 +559,21 @@ int main(int argc, char **argv) {
         if (strcmp(argv[i], "-f") == 0) foreground = 1;
     }
 
+    /* Check if another instance is already running */
+    {
+        FILE *pf = fopen(PID_FILE, "r");
+        if (pf) {
+            char pidbuf[16] = "";
+            fgets(pidbuf, sizeof(pidbuf), pf);
+            fclose(pf);
+            int old_pid = atoi(pidbuf);
+            if (old_pid > 0 && kill(old_pid, 0) == 0) {
+                fprintf(stderr, "tweaksd: already running (pid %d)\n", old_pid);
+                return 1;
+            }
+        }
+    }
+
     if (!foreground) daemonize();
 
     signal(SIGTERM, cleanup);

@@ -109,15 +109,15 @@
         btn = document.createElement('div');
         btn.id = 'tweaks-settings-btn';
         setS(btn, {
-            position: 'fixed', bottom: '12px', right: '12px',
-            padding: '12px 28px',
-            background: '#0891b2', color: '#fff', borderRadius: '9px',
-            zIndex: '99998', fontSize: '20px', fontWeight: 'bold',
+            position: 'fixed', bottom: '10px', left: '10px',
+            width: '48px', height: '48px',
+            background: '#c0392b', color: '#fff', borderRadius: '50%',
+            zIndex: '99998', fontSize: '22px', fontWeight: 'bold',
             fontFamily: 'sans-serif', cursor: 'pointer',
-            display: 'none', letterSpacing: '2px',
-            border: '1px solid ' + CYAN
+            display: 'none', textAlign: 'center', lineHeight: '48px',
+            border: '2px solid #e74c3c'
         });
-        btn.textContent = 'TWEAKS';
+        btn.textContent = 'T';
         btn.onclick = function() { showUI(); };
         document.body.appendChild(btn);
         dbg('button created');
@@ -603,28 +603,49 @@
     }
 
     function makeTweakCard(t) {
+        var hasUpdate = t.installed && t.update_available && t.has_source;
         var card = mkEl('div', {
-            position: 'relative',
             background: CARD_BG,
             border: '1px solid ' + CARD_BD,
             borderLeft: '4px solid ' + (t.installed ? GREEN : BTN_BG2),
             borderRadius: '10px',
-            padding: '18px 24px',
-            paddingRight: '200px',
-            marginBottom: '12px'
+            padding: '14px 20px',
+            marginBottom: '10px',
+            overflow: 'hidden'
         });
 
-        var titleRow = mkEl('div', { marginBottom: '8px' });
+        // Button area floated right — MUST be first in DOM for float to work
+        var btnArea = mkEl('div', {
+            cssFloat: 'right',
+            width: '120px',
+            textAlign: 'right',
+            paddingLeft: '12px',
+            paddingTop: '2px'
+        });
+
+        if (t.installed) {
+            if (hasUpdate) {
+                btnArea.appendChild(makeActionBtn('UPDATE', CYAN, t, 'update'));
+                btnArea.appendChild(mkEl('div', { height: '6px' }));
+            }
+            btnArea.appendChild(makeActionBtn('UNINSTALL', RED, t, 'uninstall'));
+        } else if (t.has_source) {
+            btnArea.appendChild(makeActionBtn('INSTALL', GREEN, t, 'install'));
+        }
+        card.appendChild(btnArea);
+
+        // Content area — flows naturally, never overlaps float
+        var titleRow = mkEl('div', { marginBottom: '4px' });
         titleRow.appendChild(mkEl('span', {
-            fontSize: '20px', fontWeight: 'bold', color: TXT
+            fontSize: '18px', fontWeight: 'bold', color: TXT
         }, t.name));
 
         var ver = t.installed ? t.installed_version : t.version;
         if (ver) {
             var vbadge = mkEl('span', {
-                display: 'inline-block', marginLeft: '10px',
-                padding: '2px 10px', borderRadius: '12px',
-                fontSize: '14px', color: TXT3,
+                display: 'inline-block', marginLeft: '8px',
+                padding: '1px 8px', borderRadius: '10px',
+                fontSize: '13px', color: TXT3,
                 background: BTN_BG, border: '1px solid ' + BTN_BG2,
                 verticalAlign: 'middle'
             }, 'v' + ver);
@@ -634,8 +655,8 @@
 
         if (t.description) {
             card.appendChild(mkEl('div', {
-                fontSize: '16px', color: TXT2, marginBottom: '10px',
-                lineHeight: '1.4'
+                fontSize: '14px', color: TXT2, marginBottom: '6px',
+                lineHeight: '1.3'
             }, t.description));
         }
 
@@ -656,32 +677,16 @@
         }
         card.appendChild(badges);
 
-        var btnArea = mkEl('div', {
-            position: 'absolute', right: '20px', top: '50%',
-            marginTop: '-24px'
-        });
-
-        if (t.installed) {
-            if (t.update_available && t.has_source) {
-                btnArea.appendChild(makeActionBtn('UPDATE', CYAN, t, 'update'));
-                btnArea.appendChild(mkEl('span', { display: 'inline-block', width: '8px' }));
-            }
-            btnArea.appendChild(makeActionBtn('UNINSTALL', RED, t, 'uninstall'));
-        } else if (t.has_source) {
-            btnArea.appendChild(makeActionBtn('INSTALL', GREEN, t, 'install'));
-        }
-
-        card.appendChild(btnArea);
         return card;
     }
 
     function makeBadge(text, color) {
         return mkEl('span', {
             display: 'inline-block',
-            padding: '4px 14px',
-            marginRight: '8px',
-            borderRadius: '6px',
-            fontSize: '14px',
+            padding: '2px 10px',
+            marginRight: '6px',
+            borderRadius: '4px',
+            fontSize: '12px',
             fontWeight: 'bold',
             letterSpacing: '1px',
             color: color,
@@ -694,11 +699,11 @@
 
     function makeActionBtn(label, color, tweak, action) {
         var b = mkEl('span', {
-            display: 'inline-block', padding: '12px 28px',
+            display: 'inline-block', padding: '8px 18px',
             background: 'transparent', color: color,
-            borderRadius: '8px', cursor: 'pointer',
-            fontSize: '16px', fontWeight: 'bold',
-            letterSpacing: '2px',
+            borderRadius: '6px', cursor: 'pointer',
+            fontSize: '14px', fontWeight: 'bold',
+            letterSpacing: '1px',
             border: '1px solid ' + color
         }, label);
         b.setAttribute('data-action', '1');
@@ -722,8 +727,9 @@
                     }
                 } else {
                     actionBusy = false;
-                    var err = (res && res.error) || 'Operation failed';
-                    updateModal('ERR', 'Failed', err, RED, 3000);
+                    var err = (s === 0) ? 'Daemon not running. Reboot or reinsert USB.'
+                            : (res && res.error) || 'Operation failed (HTTP ' + s + ')';
+                    updateModal('ERR', 'Failed', err, RED, 5000);
                 }
             });
         };

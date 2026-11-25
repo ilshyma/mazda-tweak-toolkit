@@ -586,6 +586,8 @@ int tweaks_uninstall(const char *id, char *result, int resultlen) {
     }
 
     int script_ret = 0;
+    char output[2048] = "";
+    int olen = 0;
 
     /* try uninstall script if source available */
     char usb_dir[MAX_PATH];
@@ -599,7 +601,21 @@ int tweaks_uninstall(const char *id, char *result, int resultlen) {
             snprintf(cmd, sizeof(cmd),
                      "NO_REBOOT=1 TWEAK_DIR='%s/%s' TWEAKS_LIB='%s/lib/patch.sh' sh '%s' 2>&1",
                      usb_dir, id, TWEAKS_DIR, script);
-            script_ret = system(cmd);
+            FILE *p = popen(cmd, "r");
+            if (p) {
+                char line[256];
+                while (fgets(line, sizeof(line), p)) {
+                    int ll = strlen(line);
+                    if (olen + ll < (int)sizeof(output) - 1) {
+                        memcpy(output + olen, line, ll);
+                        olen += ll;
+                    }
+                }
+                output[olen] = '\0';
+                script_ret = pclose(p);
+            } else {
+                script_ret = -1;
+            }
         }
     }
 
@@ -612,12 +628,30 @@ int tweaks_uninstall(const char *id, char *result, int resultlen) {
             snprintf(cmd, sizeof(cmd),
                      "NO_REBOOT=1 TWEAK_DIR='%s' TWEAKS_LIB='%s/lib/patch.sh' sh '%s' 2>&1",
                      inst_dir, TWEAKS_DIR, script);
-            script_ret = system(cmd);
+            FILE *p = popen(cmd, "r");
+            if (p) {
+                char line[256];
+                while (fgets(line, sizeof(line), p)) {
+                    int ll = strlen(line);
+                    if (olen + ll < (int)sizeof(output) - 1) {
+                        memcpy(output + olen, line, ll);
+                        olen += ll;
+                    }
+                }
+                output[olen] = '\0';
+                script_ret = pclose(p);
+            } else {
+                script_ret = -1;
+            }
         } else {
             /* no script — restore from backup */
             tweaks_restore_files(id);
         }
     }
+
+    if (olen >= (int)sizeof(output) - 256)
+        tweaksd_log("WARN", id, "uninstall script output may be truncated");
+    tweaksd_log_output(script_ret == 0 ? "UNINSTALL_OUT" : "UNINSTALL_ERR", id, output);
 
     if (script_ret != 0) {
         snprintf(result, resultlen,

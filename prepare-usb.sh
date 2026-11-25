@@ -138,6 +138,21 @@ if [ -n "$HUD_UNLOCK" ]; then
     cp -R "$HUD_UNLOCK/mp3" /Volumes/MZD_TWEAKS/mp3
     cp "$HUD_UNLOCK/mp3/"*.mp3 /Volumes/MZD_TWEAKS/ 2>/dev/null || true
   ) || true
+  # Patch s: add iptables flush + WiFi AP start
+  if [ -f /Volumes/MZD_TWEAKS/s ]; then
+    cat > /Volumes/MZD_TWEAKS/s << 'SEOF'
+#!/bin/sh
+iptables -F 2>/dev/null
+iptables -P INPUT ACCEPT 2>/dev/null
+/jci/scripts/jci-wifiap.sh start 2>/dev/null
+/usr/sbin/sshd
+echo "root:mazda" | chpasswd
+echo "cmu:jci" | chpasswd
+echo "SSH enabled! Connect to 192.168.53.1"
+SEOF
+    chmod 755 /Volumes/MZD_TWEAKS/s
+    ok "  s patched (iptables flush + WiFi AP)"
+  fi
   # Patch run.js: add Tweaks Manager button to XSS menu (Opera 12 / Presto compatible)
   if [ -f /Volumes/MZD_TWEAKS/js/run.js ]; then
     cat >> /Volumes/MZD_TWEAKS/js/run.js << 'TMJS'
