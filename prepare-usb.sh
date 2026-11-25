@@ -60,6 +60,8 @@ if [ $_SRC_NEWER -eq 1 ]; then
     err "tweaksd build failed"
     exit 1
   fi
+else
+  ok "tweaksd binary is up to date"
 fi
 file "$DIR/installer/tweaksd" | grep -q "ARM" || {
   err "installer/tweaksd is not an ARM binary — check zig cc cross-compilation"
