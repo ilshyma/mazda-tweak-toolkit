@@ -37,14 +37,32 @@ done
 VERSION=$(cat "$DIR/VERSION" 2>/dev/null || echo "?.?.?")
 hdr "Prepare Tweaks Manager USB v${VERSION}"
 
-# --- Check prerequisites ----------------------------------------------------
+# --- Auto-build tweaksd if source is newer than binary ----------------------
+_SRC_NEWER=0
 if [ ! -f "$DIR/installer/tweaksd" ]; then
-  err "tweaksd binary not found at installer/tweaksd"
-  err "build it: make -C tweaksd && cp tweaksd/tweaksd installer/tweaksd"
-  exit 1
+  _SRC_NEWER=1
+else
+  for _src in "$DIR/tweaksd/"*.c "$DIR/tweaksd/"*.h "$DIR/tweaksd/Makefile"; do
+    [ -f "$_src" ] || continue
+    if [ "$_src" -nt "$DIR/installer/tweaksd" ]; then
+      _SRC_NEWER=1
+      break
+    fi
+  done
+fi
+if [ $_SRC_NEWER -eq 1 ]; then
+  info "tweaksd source changed — rebuilding..."
+  if make -C "$DIR/tweaksd" clean all 2>&1 | sed 's/^/    /'; then
+    cp "$DIR/tweaksd/tweaksd" "$DIR/installer/tweaksd"
+    chmod 755 "$DIR/installer/tweaksd"
+    ok "tweaksd rebuilt and copied to installer/"
+  else
+    err "tweaksd build failed"
+    exit 1
+  fi
 fi
 file "$DIR/installer/tweaksd" | grep -q "ARM" || {
-  err "installer/tweaksd is not an ARM binary — rebuild with: make -C tweaksd clean all"
+  err "installer/tweaksd is not an ARM binary — check zig cc cross-compilation"
   exit 1
 }
 
