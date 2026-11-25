@@ -3,6 +3,7 @@
 
 #define LOG_FILE        "/data_persist/tweaks/tweaksd.log"
 #define LOG_MAX_READ    32768
+#define LOG_MAX_SIZE    (512 * 1024)
 
 void tweaksd_log(const char *op, const char *tweak_id, const char *detail);
 void tweaksd_log_output(const char *op, const char *tweak_id, const char *output);

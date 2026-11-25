@@ -696,6 +696,12 @@
     }
 
     var actionBusy = false;
+    var actionBusyTimer = null;
+
+    function resetActionBusy() {
+        actionBusy = false;
+        if (actionBusyTimer) { clearTimeout(actionBusyTimer); actionBusyTimer = null; }
+    }
 
     function makeActionBtn(label, color, tweak, action) {
         var b = mkEl('span', {
@@ -709,31 +715,42 @@
         b.setAttribute('data-action', '1');
         b.onclick = function() {
             if (actionBusy) return;
-            actionBusy = true;
-            var verb = action === 'install' ? 'Installing' : 'Uninstalling';
-            showModal(verb + ' ' + tweak.name + '...');
-            api('POST', '/api/tweaks/' + action + '/' + tweak.id, function(s, res) {
-                if (res && res.ok) {
-                    if (res.reboot) {
-                        updateModal('>>>', 'Rebooting...', 'System will restart in a few seconds', CYAN, 0);
-                        setTimeout(function() {
-                            actionBusy = false;
-                            dismissModal();
-                            loadData();
-                        }, 15000);
-                    } else {
-                        actionBusy = false;
-                        updateModal('OK', 'Done', '', GREEN, 1500);
-                    }
-                } else {
-                    actionBusy = false;
-                    var err = (s === 0) ? 'Daemon not running. Reboot or reinsert USB.'
-                            : (res && res.error) || 'Operation failed (HTTP ' + s + ')';
-                    updateModal('ERR', 'Failed', err, RED, 5000);
-                }
-            });
+            if (action === 'uninstall') {
+                showConfirmModal('Uninstall ' + tweak.name + '?', function() {
+                    doAction(tweak, action);
+                });
+                return;
+            }
+            doAction(tweak, action);
         };
         return b;
+    }
+
+    function doAction(tweak, action) {
+        actionBusy = true;
+        actionBusyTimer = setTimeout(function() { resetActionBusy(); }, 135000);
+        var verb = action === 'install' ? 'Installing' : action === 'update' ? 'Updating' : 'Uninstalling';
+        showModal(verb + ' ' + tweak.name + '...');
+        api('POST', '/api/tweaks/' + action + '/' + tweak.id, function(s, res) {
+            if (res && res.ok) {
+                if (res.reboot) {
+                    updateModal('>>>', 'Rebooting...', 'System will restart in a few seconds', CYAN, 0);
+                    setTimeout(function() {
+                        resetActionBusy();
+                        dismissModal();
+                        loadData();
+                    }, 15000);
+                } else {
+                    resetActionBusy();
+                    updateModal('OK', 'Done', '', GREEN, 1500);
+                }
+            } else {
+                resetActionBusy();
+                var err = (s === 0) ? 'Daemon not running. Reboot or reinsert USB.'
+                        : (res && res.error) || 'Operation failed (HTTP ' + s + ')';
+                updateModal('ERR', 'Failed', err, RED, 5000);
+            }
+        });
     }
 
     /* ── Modal popup for operations ──────────────────────────────── */
@@ -795,6 +812,42 @@
     function dismissModal() {
         if (modal && modal.parentNode) modal.parentNode.removeChild(modal);
         modal = null;
+    }
+
+    function showConfirmModal(text, onYes) {
+        if (modal) modal.parentNode.removeChild(modal);
+        modal = mkEl('div', {
+            position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
+            background: 'rgba(0,0,0,0.7)', zIndex: '100000',
+            display: 'block'
+        });
+        var box = mkEl('div', {
+            position: 'absolute', top: '50%', left: '50%',
+            width: '420px', marginLeft: '-210px', marginTop: '-80px',
+            background: CARD_BG, border: '1px solid ' + CARD_BD,
+            borderRadius: '16px', padding: '32px', textAlign: 'center'
+        });
+        box.appendChild(mkEl('div', {
+            fontSize: '20px', color: TXT, fontWeight: 'bold', marginBottom: '24px'
+        }, text));
+        var row = mkEl('div', { fontSize: '0' });
+        var yesBtn = mkEl('span', {
+            display: 'inline-block', padding: '10px 28px', marginRight: '12px',
+            background: RED, color: '#fff', borderRadius: '8px', cursor: 'pointer',
+            fontSize: '16px', fontWeight: 'bold'
+        }, 'YES');
+        yesBtn.onclick = function() { dismissModal(); onYes(); };
+        var noBtn = mkEl('span', {
+            display: 'inline-block', padding: '10px 28px',
+            background: BTN_BG, color: TXT2, borderRadius: '8px', cursor: 'pointer',
+            fontSize: '16px', fontWeight: 'bold', border: '1px solid ' + CARD_BD
+        }, 'CANCEL');
+        noBtn.onclick = function() { dismissModal(); };
+        row.appendChild(yesBtn);
+        row.appendChild(noBtn);
+        box.appendChild(row);
+        modal.appendChild(box);
+        document.body.appendChild(modal);
     }
 
     /* ── Helpers ───────────────────────────────────────────────────── */

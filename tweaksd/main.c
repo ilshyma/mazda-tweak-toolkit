@@ -456,10 +456,17 @@ static void handle_manager_status(http_request_t *req) {
 #define ACTION_FILE "/tmp/tweaks_action"
 #define RESULT_FILE "/tmp/tweaks_result"
 
+static char toolkit_pending_action[16] = "";
+
 static void handle_toolkit_action(http_request_t *req) {
     const char *action = req->path + strlen("/api/toolkit/");
     if (strcmp(action, "install") != 0 && strcmp(action, "uninstall") != 0) {
         http_respond_error(req, 400, "invalid action");
+        return;
+    }
+
+    if (toolkit_pending_action[0]) {
+        http_respond_json(req, 409, "{\"ok\":false,\"error\":\"action already pending\"}");
         return;
     }
 
@@ -471,25 +478,30 @@ static void handle_toolkit_action(http_request_t *req) {
     fprintf(f, "%s\n", action);
     fclose(f);
 
+    snprintf(toolkit_pending_action, sizeof(toolkit_pending_action), "%s", action);
     tweaksd_log("TOOLKIT", "-", action);
 
-    int waited = 0;
-    while (waited < 120) {
-        struct stat st;
-        if (stat(RESULT_FILE, &st) == 0) {
-            unlink(RESULT_FILE);
-            int reboot = (strcmp(action, "install") == 0);
-            char json[256];
-            snprintf(json, sizeof(json),
-                "{\"ok\":true,\"reboot\":%s}", reboot ? "true" : "false");
-            http_respond_json(req, 200, json);
-            return;
-        }
-        sleep(1);
-        waited++;
+    http_respond_json(req, 202, "{\"ok\":true,\"pending\":true}");
+}
+
+static void handle_toolkit_status(http_request_t *req) {
+    struct stat st;
+    if (stat(RESULT_FILE, &st) == 0) {
+        unlink(RESULT_FILE);
+        int reboot = (strcmp(toolkit_pending_action, "install") == 0);
+        toolkit_pending_action[0] = '\0';
+        char json[256];
+        snprintf(json, sizeof(json),
+            "{\"done\":true,\"ok\":true,\"reboot\":%s}", reboot ? "true" : "false");
+        http_respond_json(req, 200, json);
+        return;
     }
 
-    http_respond_json(req, 504, "{\"ok\":false,\"error\":\"timeout waiting for action\"}");
+    if (toolkit_pending_action[0]) {
+        http_respond_json(req, 200, "{\"done\":false,\"pending\":true}");
+    } else {
+        http_respond_json(req, 200, "{\"done\":true,\"ok\":true,\"idle\":true}");
+    }
 }
 
 static void handle_manager_setup(http_request_t *req) {
@@ -601,6 +613,7 @@ int main(int argc, char **argv) {
     httpd_add_route("/api/firewall/open/",     HTTP_POST, handle_firewall_open);
     httpd_add_route("/api/manager/status",     HTTP_GET,  handle_manager_status);
     httpd_add_route("/api/manager/setup",      HTTP_POST, handle_manager_setup);
+    httpd_add_route("/api/toolkit/status",     HTTP_GET,  handle_toolkit_status);
     httpd_add_route("/api/toolkit/",           HTTP_POST, handle_toolkit_action);
 
     /* Tweak management API */

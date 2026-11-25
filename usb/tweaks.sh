@@ -23,9 +23,24 @@ echo 1 > "/sys/class/gpio/Watchdog Disable/value" 2>/dev/null
 # ── Emergency network recovery (runs every USB insert) ─────────────
 _RLOG="$MYDIR/_recovery.log"
 echo "=== recovery $(date) ===" > "$_RLOG" 2>/dev/null
-mount -o remount,rw / 2>>"$_RLOG"
-rm -f /etc/passwd 2>/dev/null
-cat > /etc/passwd << 'PW'
+
+# Only rewrite passwd if broken (symlink to squashfs, or missing root/uid-0)
+_needs_passwd=0
+if [ -L /etc/passwd ]; then
+    _needs_passwd=1
+    echo "passwd is symlink -> needs writable copy" >> "$_RLOG"
+elif [ ! -f /etc/passwd ]; then
+    _needs_passwd=1
+    echo "passwd missing" >> "$_RLOG"
+elif ! grep -q '^root:' /etc/passwd 2>/dev/null; then
+    _needs_passwd=1
+    echo "passwd has no root entry" >> "$_RLOG"
+fi
+
+if [ $_needs_passwd -eq 1 ]; then
+    mount -o remount,rw / 2>>"$_RLOG"
+    rm -f /etc/passwd 2>/dev/null
+    cat > /etc/passwd << 'PW'
 root:x:0:0:root:/root:/bin/sh
 cmu:$5$c1skCppC7Giw5U9e$ybU6cVGn2tU60UaVcMTWSJ62QQRQjUtZCnVyHMiAkYA:0:0:root:/root:/bin/sh
 sshd:x:74:74:sshd:/var/empty/sshd:/sbin/nologin
@@ -33,16 +48,29 @@ service:x:1001:1001:Service User:/root:/bin/false
 hmi:x:1002:1002:HMI User:/root:/bin/false
 browser:x:1003:1003:Browser User:/root:/bin/false
 PW
-echo "passwd: $(ls -la /etc/passwd 2>&1)" >> "$_RLOG"
+    mount -o remount,ro / 2>/dev/null
+    echo "passwd: rebuilt" >> "$_RLOG"
+else
+    echo "passwd: OK ($(wc -l < /etc/passwd) lines)" >> "$_RLOG"
+fi
+
 mkdir -p /var/empty/sshd /tmp/ssh /etc/ssh 2>/dev/null
-[ ! -f /etc/ssh_host_rsa_key ] && ssh-keygen -t rsa -f /etc/ssh_host_rsa_key -N '' >>"$_RLOG" 2>&1
-[ ! -f /etc/ssh_host_dsa_key ] && ssh-keygen -t dsa -f /etc/ssh_host_dsa_key -N '' >>"$_RLOG" 2>&1
-[ ! -f /etc/ssh/ssh_host_rsa_key ] && cp /etc/ssh_host_rsa_key /etc/ssh/ 2>/dev/null
-[ ! -f /etc/ssh/ssh_host_dsa_key ] && cp /etc/ssh_host_dsa_key /etc/ssh/ 2>/dev/null
-mount -o remount,ro / 2>/dev/null
+if [ ! -f /etc/ssh_host_rsa_key ] || [ ! -f /etc/ssh_host_dsa_key ]; then
+    mount -o remount,rw / 2>>"$_RLOG"
+    [ ! -f /etc/ssh_host_rsa_key ] && ssh-keygen -t rsa -f /etc/ssh_host_rsa_key -N '' >>"$_RLOG" 2>&1
+    [ ! -f /etc/ssh_host_dsa_key ] && ssh-keygen -t dsa -f /etc/ssh_host_dsa_key -N '' >>"$_RLOG" 2>&1
+    [ ! -f /etc/ssh/ssh_host_rsa_key ] && cp /etc/ssh_host_rsa_key /etc/ssh/ 2>/dev/null
+    [ ! -f /etc/ssh/ssh_host_dsa_key ] && cp /etc/ssh_host_dsa_key /etc/ssh/ 2>/dev/null
+    mount -o remount,ro / 2>/dev/null
+fi
 iptables -F 2>/dev/null
 iptables -P INPUT ACCEPT 2>/dev/null
-/usr/sbin/sshd >>"$_RLOG" 2>&1
+# Use tweaks sshd config if installed, otherwise default
+if [ -f /data_persist/tweaks/sshd_tweaks.conf ]; then
+    /usr/sbin/sshd -f /data_persist/tweaks/sshd_tweaks.conf >>"$_RLOG" 2>&1
+else
+    /usr/sbin/sshd >>"$_RLOG" 2>&1
+fi
 _SSHD_RC=$?
 echo "sshd exit=$_SSHD_RC" >> "$_RLOG"
 if [ $_SSHD_RC -ne 0 ]; then
@@ -60,6 +88,7 @@ ARCH=$(uname -m 2>/dev/null || echo "??")
 STAMP=$(date "+%Y%m%d-%H%M%S" 2>/dev/null || echo "unknown")
 TS=$(date "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "??")
 FACTS="v$VERSION | FW ${FW:-?} ${FLAVOR:-?} | $ARCH | $STAMP"
+TWEAKSD_PID=""
 
 # ── Lock (mkdir-based, with stale recovery) ─────────────────────────
 take_lock() {
@@ -85,7 +114,11 @@ if ! take_lock; then
     sleep 5; killall -q jci-dialog 2>/dev/null
     exit 1
 fi
-trap 'release_lock' EXIT
+cleanup() {
+    [ -n "$TWEAKSD_PID" ] && kill $TWEAKSD_PID 2>/dev/null
+    release_lock
+}
+trap 'cleanup' EXIT
 
 # ── Remount USB rw for logging ──────────────────────────────────────
 MNT=$(awk -v d="$MYDIR/" 'index(d, $2 "/") == 1 && length($2) > length(m) { m = $2 } END { print m }' /proc/mounts 2>/dev/null)
@@ -325,7 +358,6 @@ show_manage_menu() {
 }
 
 # ── Start temp tweaksd server ───────────────────────────────────────
-TWEAKSD_PID=""
 start_temp_tweaksd() {
     if killall -0 tweaksd 2>/dev/null; then
         log "tweaksd already running (permanent daemon), skipping temp server"

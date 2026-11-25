@@ -6,7 +6,35 @@
 #include "log.h"
 #include "usb.h"
 
+static void log_rotate(void) {
+    struct stat st;
+    if (stat(LOG_FILE, &st) != 0 || st.st_size < LOG_MAX_SIZE)
+        return;
+    /* keep last ~256KB */
+    FILE *f = fopen(LOG_FILE, "r");
+    if (!f) return;
+    long keep = 256 * 1024;
+    fseek(f, st.st_size - keep, SEEK_SET);
+    /* align to next newline */
+    int c;
+    while ((c = fgetc(f)) != EOF && c != '\n') {}
+    long start = ftell(f);
+    long len = st.st_size - start;
+    char *buf = malloc(len + 1);
+    if (!buf) { fclose(f); return; }
+    long n = fread(buf, 1, len, f);
+    fclose(f);
+    f = fopen(LOG_FILE, "w");
+    if (f) {
+        fprintf(f, "[LOG] rotated (%ld -> %ld bytes)\n", (long)st.st_size, n);
+        fwrite(buf, 1, n, f);
+        fclose(f);
+    }
+    free(buf);
+}
+
 void tweaksd_log(const char *op, const char *tweak_id, const char *detail) {
+    log_rotate();
     FILE *f = fopen(LOG_FILE, "a");
     if (!f) return;
 

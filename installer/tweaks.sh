@@ -224,6 +224,7 @@ SSHCONF
             OBAK="/data_persist/$(basename "$OTHER").bak_tweaks"
             [ -f "$OBAK" ] || cp -a "$OTHER" "$OBAK"
             awk '/<service.*name="tweaksd"/{skip=1} /<\/service>/{if(skip){skip=0;next}} !skip' "$OTHER" > "$OTHER.tmp" && mv "$OTHER.tmp" "$OTHER"
+            sync
             log "[4/7] removed stale tweaksd service from $OTHER"
         fi
     done
@@ -272,6 +273,7 @@ AUTOSTART
     else
         log "[5/7] boot autostart already present in stage_wifi.sh"
     fi
+    sync
 
     # Legacy autorun cleanup — remove broken remnants from v1.3.1 uninstall bug
     AUTORUN="/data_persist/dev/bin/autorun"
@@ -443,6 +445,7 @@ do_uninstall() {
             awk '/# tweaks:tweaksd-autostart:begin/{skip=1;next} /# tweaks:tweaksd-autostart:end/{skip=0;next} !skip' \
                 "$STAGE_WIFI" > "$STAGE_WIFI.tmp" && mv "$STAGE_WIFI.tmp" "$STAGE_WIFI"
         fi
+        sync
         log "[3/4] tweaksd block removed from stage_wifi.sh"
     fi
     # Legacy: remove from stage_2.sh (old location)
@@ -487,6 +490,7 @@ do_uninstall() {
         [ -f "$SM" ] || continue
         if grep -q "tweaksd" "$SM"; then
             awk '/<service.*name="tweaksd"/{skip=1} /<\/service>/{if(skip){skip=0;next}} !skip' "$SM" > "$SM.tmp" && mv "$SM.tmp" "$SM"
+            sync
             log "[3/4] removed tweaksd service from $SM"
         fi
     done
@@ -499,10 +503,12 @@ do_uninstall() {
         log "[3/4] removed legacy index.html injections"
     fi
 
-    log "[4/4] Removing daemon..."
+    log "[4/4] Removing daemon and stale data..."
     rm -f /data_persist/tweaks/tweaksd
     rm -f /data_persist/tweaks/tweaksd_installed
-    log "[4/4] daemon and marker removed"
+    rm -rf /data_persist/tweaks/installed
+    rm -rf /data_persist/tweaks/available
+    log "[4/4] daemon, marker, and tweak records removed"
 
     # ── Verify ──────────────────────────────────────────────────────
     sync

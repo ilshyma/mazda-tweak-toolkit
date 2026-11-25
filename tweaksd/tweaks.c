@@ -13,6 +13,23 @@
 static char firmware_version[32] = "";
 static volatile int busy = 0;
 
+static int run_script(const char *cmd, char *output, int outlen) {
+    int olen = 0;
+    output[0] = '\0';
+    FILE *p = popen(cmd, "r");
+    if (!p) return -1;
+    char line[256];
+    while (fgets(line, sizeof(line), p)) {
+        int ll = strlen(line);
+        if (olen + ll < outlen - 1) {
+            memcpy(output + olen, line, ll);
+            olen += ll;
+        }
+    }
+    output[olen] = '\0';
+    return pclose(p);
+}
+
 static int remount_rw(void) {
     int r = system("mount -o remount,rw /");
     if (r != 0)
@@ -301,12 +318,16 @@ static int backup_one_file(const char *filepath, const char *backup_dir) {
     snprintf(dst, sizeof(dst), "%s/%s", backup_dir, flat);
 
     char cmd[1024];
+    char out[512];
     if (S_ISDIR(st.st_mode)) {
-        snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -a '%s' '%s'", dst, filepath, dst);
+        snprintf(cmd, sizeof(cmd), "rm -rf '%s' && cp -a '%s' '%s' 2>&1", dst, filepath, dst);
     } else {
-        snprintf(cmd, sizeof(cmd), "cp -a '%s' '%s'", filepath, dst);
+        snprintf(cmd, sizeof(cmd), "cp -a '%s' '%s' 2>&1", filepath, dst);
     }
-    return system(cmd) == 0 ? 0 : -1;
+    int ret = run_script(cmd, out, sizeof(out));
+    if (ret != 0 && out[0])
+        tweaksd_log("ERROR", "backup", out);
+    return ret == 0 ? 0 : -1;
 }
 
 int tweaks_backup_files(const tweak_t *tweak) {
@@ -348,13 +369,15 @@ static int restore_one_file(const char *filepath, const char *backup_dir, const 
     if (stat(src, &st) != 0) return 0;
 
     char cmd[1024];
+    char out[512];
     if (S_ISDIR(st.st_mode)) {
-        snprintf(cmd, sizeof(cmd), "cp -a '%s'/. '%s/'", src, filepath);
+        snprintf(cmd, sizeof(cmd), "cp -a '%s'/. '%s/' 2>&1", src, filepath);
     } else {
-        snprintf(cmd, sizeof(cmd), "cp -a '%s' '%s'", src, filepath);
+        snprintf(cmd, sizeof(cmd), "cp -a '%s' '%s' 2>&1", src, filepath);
     }
-    if (system(cmd) != 0) {
-        tweaksd_log("ERROR", id, "restore failed for file");
+    int ret = run_script(cmd, out, sizeof(out));
+    if (ret != 0) {
+        tweaksd_log("ERROR", id, out[0] ? out : "restore failed for file");
         return -1;
     }
     return 0;
@@ -587,7 +610,6 @@ int tweaks_uninstall(const char *id, char *result, int resultlen) {
 
     int script_ret = 0;
     char output[2048] = "";
-    int olen = 0;
 
     /* try uninstall script if source available */
     char usb_dir[MAX_PATH];
@@ -601,21 +623,7 @@ int tweaks_uninstall(const char *id, char *result, int resultlen) {
             snprintf(cmd, sizeof(cmd),
                      "NO_REBOOT=1 TWEAK_DIR='%s/%s' TWEAKS_LIB='%s/lib/patch.sh' sh '%s' 2>&1",
                      usb_dir, id, TWEAKS_DIR, script);
-            FILE *p = popen(cmd, "r");
-            if (p) {
-                char line[256];
-                while (fgets(line, sizeof(line), p)) {
-                    int ll = strlen(line);
-                    if (olen + ll < (int)sizeof(output) - 1) {
-                        memcpy(output + olen, line, ll);
-                        olen += ll;
-                    }
-                }
-                output[olen] = '\0';
-                script_ret = pclose(p);
-            } else {
-                script_ret = -1;
-            }
+            script_ret = run_script(cmd, output, sizeof(output));
         }
     }
 
@@ -628,28 +636,14 @@ int tweaks_uninstall(const char *id, char *result, int resultlen) {
             snprintf(cmd, sizeof(cmd),
                      "NO_REBOOT=1 TWEAK_DIR='%s' TWEAKS_LIB='%s/lib/patch.sh' sh '%s' 2>&1",
                      inst_dir, TWEAKS_DIR, script);
-            FILE *p = popen(cmd, "r");
-            if (p) {
-                char line[256];
-                while (fgets(line, sizeof(line), p)) {
-                    int ll = strlen(line);
-                    if (olen + ll < (int)sizeof(output) - 1) {
-                        memcpy(output + olen, line, ll);
-                        olen += ll;
-                    }
-                }
-                output[olen] = '\0';
-                script_ret = pclose(p);
-            } else {
-                script_ret = -1;
-            }
+            script_ret = run_script(cmd, output, sizeof(output));
         } else {
             /* no script — restore from backup */
             tweaks_restore_files(id);
         }
     }
 
-    if (olen >= (int)sizeof(output) - 256)
+    if (strlen(output) >= sizeof(output) - 256)
         tweaksd_log("WARN", id, "uninstall script output may be truncated");
     tweaksd_log_output(script_ret == 0 ? "UNINSTALL_OUT" : "UNINSTALL_ERR", id, output);
 
@@ -720,6 +714,7 @@ int tweaks_update(const char *id, const tweak_list_t *list, char *result, int re
 
     /* Step 1: run uninstall with NO_REBOOT=1 */
     int uninstall_ok = 0;
+    char upd_output[2048] = "";
     char usb_dir[MAX_PATH];
     if (usb_find_tweaks_dir(usb_dir, sizeof(usb_dir)) == 0) {
         char script[MAX_PATH];
@@ -729,7 +724,7 @@ int tweaks_update(const char *id, const tweak_list_t *list, char *result, int re
             snprintf(cmd, sizeof(cmd),
                      "NO_REBOOT=1 TWEAK_DIR='%s/%s' TWEAKS_LIB='%s/lib/patch.sh' sh '%s' 2>&1",
                      usb_dir, id, TWEAKS_DIR, script);
-            uninstall_ok = (system(cmd) == 0);
+            uninstall_ok = (run_script(cmd, upd_output, sizeof(upd_output)) == 0);
         }
     }
     if (!uninstall_ok) {
@@ -739,12 +734,13 @@ int tweaks_update(const char *id, const tweak_list_t *list, char *result, int re
             snprintf(cmd, sizeof(cmd),
                      "NO_REBOOT=1 TWEAK_DIR='%s/installed/%s' TWEAKS_LIB='%s/lib/patch.sh' sh '%s' 2>&1",
                      TWEAKS_DIR, id, TWEAKS_DIR, inst_dir);
-            uninstall_ok = (system(cmd) == 0);
+            uninstall_ok = (run_script(cmd, upd_output, sizeof(upd_output)) == 0);
         } else {
             tweaks_restore_files(id);
             uninstall_ok = 1;
         }
     }
+    tweaksd_log_output(uninstall_ok ? "UPDATE_UNINSTALL_OUT" : "UPDATE_UNINSTALL_ERR", id, upd_output);
 
     if (!uninstall_ok) {
         snprintf(result, resultlen, "{\"ok\":false,\"error\":\"uninstall step failed\"}");
