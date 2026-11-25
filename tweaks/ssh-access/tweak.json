@@ -1,0 +1,14 @@
+{
+  "id": "ssh-access",
+  "name": "SSH Access",
+  "version": "2.0.0",
+  "description": "Enables SSH on port 22 with password auth (user: cmu/root, pass: jci)",
+  "author": "Tweaks Manager",
+  "min_firmware": "74.00.324",
+  "max_firmware": "74.00.324A",
+  "requires_reboot": false,
+  "regions": ["EU", "NA"],
+  "modifies": [],
+  "conflicts_with": [],
+  "depends_on": ["wifi-ap"]
+}

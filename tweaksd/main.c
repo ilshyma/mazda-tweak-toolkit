@@ -52,67 +52,7 @@ static void open_firewall_port(int port) {
     system(cmd);
 }
 
-/* ─── Wizard API ─── */
-
-#define WIZARD_STATE_FILE "/data_persist/tweaks/.wizard_state"
-
-static void handle_wizard_state(http_request_t *req) {
-    char state[512] = "";
-    FILE *f = fopen(WIZARD_STATE_FILE, "r");
-    if (f) {
-        int n = fread(state, 1, sizeof(state) - 1, f);
-        state[n] = '\0';
-        fclose(f);
-    }
-
-    int ssh_installed = 0;
-    int ssh_running = 0;
-    int manager_installed = 0;
-    struct stat st;
-
-    if (system("grep -q 'tweaks:ssh-safety:begin' /jci/scripts/stage_wifi.sh 2>/dev/null"
-               " || grep -q 'tweaks:ssh-access' /jci/scripts/stage_wifi.sh 2>/dev/null") == 0)
-        ssh_installed = 1;
-    if (stat("/var/run/sshd_tweaks.pid", &st) == 0)
-        ssh_running = 1;
-    if (stat("/data_persist/tweaks/tweaksd_installed", &st) == 0)
-        manager_installed = 1;
-
-    char escaped[1024];
-    int j = 0;
-    for (int i = 0; state[i] && j < (int)sizeof(escaped) - 2; i++) {
-        if (state[i] == '"' || state[i] == '\\') escaped[j++] = '\\';
-        if (state[i] == '\n' || state[i] == '\r') continue;
-        escaped[j++] = state[i];
-    }
-    escaped[j] = '\0';
-
-    char json[2048];
-    snprintf(json, sizeof(json),
-        "{\"ssh_installed\":%s,\"ssh_running\":%s,"
-        "\"manager_installed\":%s,\"wizard_state\":\"%s\","
-        "\"version\":\"%s\"}",
-        ssh_installed ? "true" : "false",
-        ssh_running ? "true" : "false",
-        manager_installed ? "true" : "false",
-        escaped, VERSION);
-    http_respond_json(req, 200, json);
-}
-
-static void handle_wizard_state_set(http_request_t *req) {
-    if (req->body_len == 0) {
-        http_respond_error(req, 400, "empty body");
-        return;
-    }
-    FILE *f = fopen(WIZARD_STATE_FILE, "w");
-    if (!f) {
-        http_respond_error(req, 500, "cannot write state");
-        return;
-    }
-    fwrite(req->body, 1, req->body_len, f);
-    fclose(f);
-    http_respond_json(req, 200, "{\"ok\":true}");
-}
+/* ─── Status API ─── */
 
 static void handle_ssh_check(http_request_t *req) {
     int port22_listening = 0;
@@ -165,7 +105,7 @@ static void handle_firewall_open(http_request_t *req) {
     http_respond_json(req, 200, json);
 }
 
-/* ─── Existing API handlers ─── */
+/* ─── Tweak management API ─── */
 
 static void handle_list(http_request_t *req) {
     refresh_tweak_list();
@@ -415,114 +355,6 @@ static void handle_log_export(http_request_t *req) {
     }
 }
 
-/* ─── Manager status/setup ─── */
-
-static void handle_manager_status(http_request_t *req) {
-    struct stat st;
-    int installed = (stat("/data_persist/tweaks/tweaksd_installed", &st) == 0);
-
-    char manager_ver[64] = "0.0.0";
-    if (installed) {
-        FILE *f = fopen("/data_persist/tweaks/tweaksd_installed", "r");
-        if (f) {
-            char line[128];
-            if (fgets(line, sizeof(line), f)) {
-                if (fgets(line, sizeof(line), f)) {
-                    line[strcspn(line, "\n\r")] = '\0';
-                    snprintf(manager_ver, sizeof(manager_ver), "%s", line);
-                }
-            }
-            fclose(f);
-        }
-    }
-
-    char escaped_ver[128];
-    int j = 0;
-    for (int i = 0; manager_ver[i] && j < (int)sizeof(escaped_ver) - 2; i++) {
-        if (manager_ver[i] == '"' || manager_ver[i] == '\\') escaped_ver[j++] = '\\';
-        escaped_ver[j++] = manager_ver[i];
-    }
-    escaped_ver[j] = '\0';
-
-    char json[512];
-    snprintf(json, sizeof(json),
-        "{\"installed\":%s,\"version\":\"%s\",\"manager_version\":\"%s\"}",
-        installed ? "true" : "false",
-        VERSION,
-        escaped_ver);
-    http_respond_json(req, 200, json);
-}
-
-#define ACTION_FILE "/tmp/tweaks_action"
-#define RESULT_FILE "/tmp/tweaks_result"
-
-static char toolkit_pending_action[16] = "";
-
-static void handle_toolkit_action(http_request_t *req) {
-    const char *action = req->path + strlen("/api/toolkit/");
-    if (strcmp(action, "install") != 0 && strcmp(action, "uninstall") != 0) {
-        http_respond_error(req, 400, "invalid action");
-        return;
-    }
-
-    if (toolkit_pending_action[0]) {
-        http_respond_json(req, 409, "{\"ok\":false,\"error\":\"action already pending\"}");
-        return;
-    }
-
-    FILE *f = fopen(ACTION_FILE, "w");
-    if (!f) {
-        http_respond_json(req, 500, "{\"ok\":false,\"error\":\"cannot write action\"}");
-        return;
-    }
-    fprintf(f, "%s\n", action);
-    fclose(f);
-
-    snprintf(toolkit_pending_action, sizeof(toolkit_pending_action), "%s", action);
-    tweaksd_log("TOOLKIT", "-", action);
-
-    http_respond_json(req, 202, "{\"ok\":true,\"pending\":true}");
-}
-
-static void handle_toolkit_status(http_request_t *req) {
-    struct stat st;
-    if (stat(RESULT_FILE, &st) == 0) {
-        unlink(RESULT_FILE);
-        int reboot = (strcmp(toolkit_pending_action, "install") == 0);
-        toolkit_pending_action[0] = '\0';
-        char json[256];
-        snprintf(json, sizeof(json),
-            "{\"done\":true,\"ok\":true,\"reboot\":%s}", reboot ? "true" : "false");
-        http_respond_json(req, 200, json);
-        return;
-    }
-
-    if (toolkit_pending_action[0]) {
-        http_respond_json(req, 200, "{\"done\":false,\"pending\":true}");
-    } else {
-        http_respond_json(req, 200, "{\"done\":true,\"ok\":true,\"idle\":true}");
-    }
-}
-
-static void handle_manager_setup(http_request_t *req) {
-    struct stat st;
-    if (stat("/data_persist/tweaks/tweaksd_installed", &st) == 0) {
-        http_respond_json(req, 200, "{\"ok\":true,\"message\":\"already installed\"}");
-        return;
-    }
-    mkdir("/data_persist/tweaks/installed", 0755);
-    mkdir("/data_persist/tweaks/backups", 0755);
-    mkdir("/data_persist/tweaks/scripts", 0755);
-
-    FILE *f = fopen("/data_persist/tweaks/tweaksd_installed", "w");
-    if (f) {
-        fprintf(f, "installed\n%s\n", VERSION);
-        fclose(f);
-    }
-    tweaksd_log("SETUP", "-", "manager setup via wizard");
-    http_respond_json(req, 200, "{\"ok\":true}");
-}
-
 /* ─── Lifecycle ─── */
 
 static void write_pidfile(void) {
@@ -548,21 +380,6 @@ static void daemonize(void) {
     close(STDIN_FILENO);
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
-}
-
-static void find_and_set_wizard_dir(void) {
-    usb_mounts_t mounts;
-    usb_scan_mounts(&mounts);
-    for (int i = 0; i < mounts.count; i++) {
-        char path[MAX_PATH];
-        struct stat st;
-        snprintf(path, sizeof(path), "%s/tweaks-manager/wizard", mounts.mount_points[i]);
-        if (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
-            httpd_set_static_dir(path);
-            return;
-        }
-    }
-    httpd_set_static_dir("/data_persist/tweaks/wizard");
 }
 
 int main(int argc, char **argv) {
@@ -596,25 +413,15 @@ int main(int argc, char **argv) {
     tweaks_init();
     tweaksd_log("START", "-", "tweaksd v" VERSION " started");
 
-    /* No firewall ports — temp server on loopback only */
-
     if (httpd_init() != 0) {
         fprintf(stderr, "tweaksd: cannot bind to port %d\n", HTTP_PORT);
         return 1;
     }
 
-    find_and_set_wizard_dir();
-
-    /* Wizard API */
-    httpd_add_route("/api/wizard/state",       HTTP_GET,  handle_wizard_state);
-    httpd_add_route("/api/wizard/state",       HTTP_POST, handle_wizard_state_set);
+    /* Status API */
     httpd_add_route("/api/ssh/check",          HTTP_GET,  handle_ssh_check);
     httpd_add_route("/api/wifi/status",        HTTP_GET,  handle_wifi_status);
     httpd_add_route("/api/firewall/open/",     HTTP_POST, handle_firewall_open);
-    httpd_add_route("/api/manager/status",     HTTP_GET,  handle_manager_status);
-    httpd_add_route("/api/manager/setup",      HTTP_POST, handle_manager_setup);
-    httpd_add_route("/api/toolkit/status",     HTTP_GET,  handle_toolkit_status);
-    httpd_add_route("/api/toolkit/",           HTTP_POST, handle_toolkit_action);
 
     /* Tweak management API */
     httpd_add_route("/api/tweaks/setup/",      HTTP_POST, handle_setup);

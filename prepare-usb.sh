@@ -222,7 +222,6 @@ info "  trigger files copied (t, tweaks.sh, jci-autoupdate, dataRetrieval_config
   mkdir -p /Volumes/MZD_TWEAKS/tweaks-manager/lib
   mkdir -p /Volumes/MZD_TWEAKS/tweaks-manager/jci-app
 
-  cp "$DIR/installer/tweaks.sh" /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaks.sh
   cp "$DIR/installer/tweaksd" /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaksd
   chmod 755 /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaksd
 
@@ -282,7 +281,7 @@ echo
 problems=0
 
 for f in t tweaks.sh jci-autoupdate dataRetrieval_config.txt \
-         tweaks-manager/installer/tweaks.sh tweaks-manager/installer/tweaksd \
+         tweaks-manager/installer/tweaksd \
          tweaks-manager/lib/patch.sh \
          tweaks-manager/jci-app/tweaks-menu.js; do
   if [ ! -e "/Volumes/MZD_TWEAKS/$f" ]; then

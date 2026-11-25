@@ -124,18 +124,10 @@
     }
 
     function checkVisibility() {
-        try {
-            var app = window.framework && window.framework._currentAppUiaId;
-            var show = (app === 'syssettings' || app === 'vehsettings');
-            if (show && !visible) {
-                if (btn) btn.style.display = 'block';
-                visible = true;
-            } else if (!show && visible) {
-                if (btn) btn.style.display = 'none';
-                if (overlay) overlay.style.display = 'none';
-                visible = false;
-            }
-        } catch(e) {}
+        if (!visible) {
+            if (btn) btn.style.display = 'block';
+            visible = true;
+        }
     }
 
     /* ── Header ────────────────────────────────────────────────────── */
@@ -876,7 +868,8 @@
     function start() {
         createButton();
         setInterval(checkVisibility, 1500);
-        dbg('started, polling visibility');
+        dbg('started, auto-opening UI');
+        setTimeout(function() { showUI(); }, 2000);
     }
 
     if (window.opera && window.opera.addEventListener) {

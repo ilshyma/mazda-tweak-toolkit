@@ -1,12 +1,14 @@
 #!/bin/sh
-# Tweaks Manager — Runner
-# Owns ALL I/O: USB remount, logging, lock, UI dialogs, snapshot, result, reboot.
-# Installer is called as a subprocess; its stdout/stderr is captured by our exec.
+# Tweaks Manager 2.0 — USB Runner
+# USB-only architecture: tweaksd runs from USB, UI is temporary.
+# Flow: lock → log → snapshot → verify → start daemon → deploy UI → ready.
 #
 # Trigger: CVE-2024-8359 .up filename injection → t trampoline → this script.
 
 MYDIR=$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")
-INSTALLER="$MYDIR/tweaks-manager/installer/tweaks.sh"
+TWEAKSD_USB="$MYDIR/tweaks-manager/installer/tweaksd"
+USERJS_SRC="$MYDIR/tweaks-manager/jci-app/tweaks-menu.js"
+LIB_SRC="$MYDIR/tweaks-manager/lib/patch.sh"
 DLG=/jci/tools/jci-dialog
 TITLE="Tweaks Manager"
 USB_VER_FILE="$MYDIR/tweaks-manager/VERSION"
@@ -20,66 +22,6 @@ LOCKDIR="/tmp/tweaks-manager.lock"
 hwclock --hctosys 2>/dev/null
 echo 1 > "/sys/class/gpio/Watchdog Disable/value" 2>/dev/null
 
-# ── Emergency network recovery (runs every USB insert) ─────────────
-_RLOG="$MYDIR/_recovery.log"
-echo "=== recovery $(date) ===" > "$_RLOG" 2>/dev/null
-
-# Only rewrite passwd if broken (symlink to squashfs, or missing root/uid-0)
-_needs_passwd=0
-if [ -L /etc/passwd ]; then
-    _needs_passwd=1
-    echo "passwd is symlink -> needs writable copy" >> "$_RLOG"
-elif [ ! -f /etc/passwd ]; then
-    _needs_passwd=1
-    echo "passwd missing" >> "$_RLOG"
-elif ! grep -q '^root:' /etc/passwd 2>/dev/null; then
-    _needs_passwd=1
-    echo "passwd has no root entry" >> "$_RLOG"
-fi
-
-if [ $_needs_passwd -eq 1 ]; then
-    mount -o remount,rw / 2>>"$_RLOG"
-    rm -f /etc/passwd 2>/dev/null
-    cat > /etc/passwd << 'PW'
-root:x:0:0:root:/root:/bin/sh
-cmu:$5$c1skCppC7Giw5U9e$ybU6cVGn2tU60UaVcMTWSJ62QQRQjUtZCnVyHMiAkYA:0:0:root:/root:/bin/sh
-sshd:x:74:74:sshd:/var/empty/sshd:/sbin/nologin
-service:x:1001:1001:Service User:/root:/bin/false
-hmi:x:1002:1002:HMI User:/root:/bin/false
-browser:x:1003:1003:Browser User:/root:/bin/false
-PW
-    mount -o remount,ro / 2>/dev/null
-    echo "passwd: rebuilt" >> "$_RLOG"
-else
-    echo "passwd: OK ($(wc -l < /etc/passwd) lines)" >> "$_RLOG"
-fi
-
-mkdir -p /var/empty/sshd /tmp/ssh /etc/ssh 2>/dev/null
-if [ ! -f /etc/ssh_host_rsa_key ] || [ ! -f /etc/ssh_host_dsa_key ]; then
-    mount -o remount,rw / 2>>"$_RLOG"
-    [ ! -f /etc/ssh_host_rsa_key ] && ssh-keygen -t rsa -f /etc/ssh_host_rsa_key -N '' >>"$_RLOG" 2>&1
-    [ ! -f /etc/ssh_host_dsa_key ] && ssh-keygen -t dsa -f /etc/ssh_host_dsa_key -N '' >>"$_RLOG" 2>&1
-    [ ! -f /etc/ssh/ssh_host_rsa_key ] && cp /etc/ssh_host_rsa_key /etc/ssh/ 2>/dev/null
-    [ ! -f /etc/ssh/ssh_host_dsa_key ] && cp /etc/ssh_host_dsa_key /etc/ssh/ 2>/dev/null
-    mount -o remount,ro / 2>/dev/null
-fi
-iptables -F 2>/dev/null
-iptables -P INPUT ACCEPT 2>/dev/null
-# Use tweaks sshd config if installed, otherwise default
-if [ -f /data_persist/tweaks/sshd_tweaks.conf ]; then
-    /usr/sbin/sshd -f /data_persist/tweaks/sshd_tweaks.conf >>"$_RLOG" 2>&1
-else
-    /usr/sbin/sshd >>"$_RLOG" 2>&1
-fi
-_SSHD_RC=$?
-echo "sshd exit=$_SSHD_RC" >> "$_RLOG"
-if [ $_SSHD_RC -ne 0 ]; then
-    dropbear -p 22 -R >>"$_RLOG" 2>&1 || echo "dropbear failed too" >> "$_RLOG"
-fi
-/jci/scripts/jci-wifiap.sh start >>"$_RLOG" 2>&1
-echo "done ports: $(netstat -tlnp 2>/dev/null | grep -E ':22|:36000')" >> "$_RLOG"
-# ── End recovery ───────────────────────────────────────────────────
-
 # ── Parse firmware ──────────────────────────────────────────────────
 FW=$(grep '^JCI_SW_VER=' /jci/version.ini 2>/dev/null | cut -d'"' -f2 | sed 's/MAZ_CMU-150_//')
 : "${FW:=??}"
@@ -88,7 +30,6 @@ ARCH=$(uname -m 2>/dev/null || echo "??")
 STAMP=$(date "+%Y%m%d-%H%M%S" 2>/dev/null || echo "unknown")
 TS=$(date "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "??")
 FACTS="v$VERSION | FW ${FW:-?} ${FLAVOR:-?} | $ARCH | $STAMP"
-TWEAKSD_PID=""
 
 # ── Lock (mkdir-based, with stale recovery) ─────────────────────────
 take_lock() {
@@ -115,7 +56,6 @@ if ! take_lock; then
     exit 1
 fi
 cleanup() {
-    [ -n "$TWEAKSD_PID" ] && kill $TWEAKSD_PID 2>/dev/null
     release_lock
 }
 trap 'cleanup' EXIT
@@ -174,18 +114,6 @@ result() {
     fi
 }
 
-# ── Error code mapping ──────────────────────────────────────────────
-explain_failure() {
-    case "$1" in
-        1)   echo "E_GENERAL: installer reported an error" ;;
-        2)   echo "E_REMOUNT: cannot remount filesystem" ;;
-        3)   echo "E_NOFILE: required file missing from USB" ;;
-        4)   echo "E_PATCH: config patch failed sanity check" ;;
-        5)   echo "E_VERIFY: post-install verification failed" ;;
-        *)   echo "E_UNKNOWN: installer exit code $1" ;;
-    esac
-}
-
 # ── System snapshot ─────────────────────────────────────────────────
 snapshot() {
     {
@@ -206,15 +134,8 @@ snapshot() {
         grep -i 'user javascript' /jci/opera/opera_home/opera.ini 2>&1
         echo "--- userjs dir"
         ls -la /jci/opera/opera_dir/userjs/ 2>&1
-        echo "--- autorun"
-        cat /data_persist/dev/bin/autorun 2>&1
-        echo "--- tweaksd installed?"
-        cat /data_persist/tweaks/tweaksd_installed 2>&1
         echo "--- data_persist/tweaks"
         ls -la /data_persist/tweaks/ 2>&1
-        echo "--- sm.conf LD_PRELOAD"
-        grep -n 'LD_PRELOAD\|tweaks' /jci/sm/sm.conf 2>&1
-        grep -n 'LD_PRELOAD\|tweaks' /jci/sm/sm_WCP.conf 2>&1
         echo "--- processes"
         ps aux 2>/dev/null | grep -E 'tweaks|opera|jci' | grep -v grep
         echo "--- dmesg tail"
@@ -271,9 +192,9 @@ if [ ! -x "$DLG" ]; then
     exit 1
 fi
 
-if [ ! -f "$INSTALLER" ]; then
-    log "FATAL: installer not found at $INSTALLER"
-    result "E_NOFILE" "tweaks-manager folder not found on USB." "Re-create the USB stick." ""
+if [ ! -x "$TWEAKSD_USB" ]; then
+    log "FATAL: tweaksd binary not found at $TWEAKSD_USB"
+    result "E_NOFILE" "tweaksd binary not found on USB." "Re-create the USB stick." ""
     exit 1
 fi
 
@@ -291,148 +212,81 @@ if [ "$FW_NUM" != "74.00.324" ]; then
     log "User continued despite FW warning"
 fi
 
-# ── Run installer and handle result ─────────────────────────────────
-run_installer() {
-    ACTION="$1"
-    log "--- Calling installer: $ACTION ---"
-    panel "Running $ACTION..."
-
-    sh "$INSTALLER" "$MYDIR" "$ACTION"
-    RC=$?
-
-    if [ $RC -eq 0 ]; then
-        log "--- Installer finished OK ---"
-        if [ "$ACTION" = "install" ]; then
-            result "OK" "Tweaks Manager installed." "Backup files saved to USB." "Copy tweaks-manager/backup/ to your computer!"
-            finish "Tweaks Manager installed.\n\nIMPORTANT: Backup files are on the USB.\nCopy tweaks-manager/backup/ folder\nto your computer before formatting."
-        else
-            result "OK" "Tweaks Manager ${ACTION}ed successfully." "" ""
-            finish "Tweaks Manager ${ACTION}ed."
-        fi
-    else
-        ERRCODE=$(explain_failure $RC)
-        log "--- Installer FAILED: exit $RC ($ERRCODE) ---"
-        result "$ERRCODE" "Installation failed (exit $RC)." "Check logs on the USB stick." ""
-    fi
-}
-
-# ── Version comparison (semver: returns 0 if $1 > $2) ─────────────
-ver_newer() {
-    a1=$(echo "$1" | cut -d. -f1); a1=${a1:-0}
-    b1=$(echo "$1" | cut -d. -f2); b1=${b1:-0}
-    c1=$(echo "$1" | cut -d. -f3); c1=${c1:-0}
-    a2=$(echo "$2" | cut -d. -f1); a2=${a2:-0}
-    b2=$(echo "$2" | cut -d. -f2); b2=${b2:-0}
-    c2=$(echo "$2" | cut -d. -f3); c2=${c2:-0}
-    [ "$a1" -gt "$a2" ] && return 0
-    [ "$a1" -lt "$a2" ] && return 1
-    [ "$b1" -gt "$b2" ] && return 0
-    [ "$b1" -lt "$b2" ] && return 1
-    [ "$c1" -gt "$c2" ] && return 0
-    return 1
-}
-
-# ── Manage menu (already installed) ────────────────────────────────
-show_manage_menu() {
-    "$DLG" --3-button-dialog --title "$TITLE" \
-        --text "Tweaks Manager v$INST_VER\nFirmware: $FW" \
-        --ok-label "Reinstall" --cancel-label "Uninstall" --button3-label "Close"
-    RC=$?
-    if [ $RC -eq 0 ]; then
-        log "User chose: Reinstall"
-        run_installer install
-    elif [ $RC -eq 1 ]; then
-        log "User chose: Uninstall path"
-        "$DLG" --question --title "$TITLE" \
-            --text "Remove Tweaks Manager?\n\nUninstall tweaks first via the app." \
-            --ok-label "Uninstall" --cancel-label "Cancel"
-        if [ $? -eq 0 ]; then
-            log "User confirmed uninstall"
-            run_installer uninstall
-        else
-            log "User cancelled uninstall"
-        fi
-    else
-        log "User closed manage menu"
-    fi
-}
-
-# ── Start temp tweaksd server ───────────────────────────────────────
-start_temp_tweaksd() {
-    if killall -0 tweaksd 2>/dev/null; then
-        log "tweaksd already running (permanent daemon), skipping temp server"
-        panel "tweaksd running"
-        return
-    fi
-    TWEAKSD_USB="$MYDIR/tweaks-manager/installer/tweaksd"
-    TWEAKSD_INST="/data_persist/tweaks/tweaksd"
-    DAEMON=""
-    [ -x "$TWEAKSD_USB" ] && DAEMON="$TWEAKSD_USB"
-    [ -z "$DAEMON" ] && [ -x "$TWEAKSD_INST" ] && DAEMON="$TWEAKSD_INST"
-    if [ -n "$DAEMON" ]; then
-        "$DAEMON" -f </dev/null >/dev/null 2>&1 &
-        TWEAKSD_PID=$!
-        sleep 1
-        if kill -0 $TWEAKSD_PID 2>/dev/null; then
-            log "tweaksd temp server started (PID $TWEAKSD_PID) from $DAEMON"
-            panel "tweaksd running"
-        else
-            log "WARN: tweaksd failed to start"
-            TWEAKSD_PID=""
-        fi
-    else
-        log "WARN: no tweaksd binary found, browser UI unavailable"
-    fi
-}
-start_temp_tweaksd
-
-# ── Menu ────────────────────────────────────────────────────────────
-if [ -f /data_persist/tweaks/tweaksd_installed ]; then
-    INST_VER=$(head -2 /data_persist/tweaks/tweaksd_installed 2>/dev/null | tail -1)
-    [ -z "$INST_VER" ] && INST_VER="?"
-    log "Installed v$INST_VER, USB v$VERSION"
-
-    if ver_newer "$VERSION" "$INST_VER"; then
-        log "Update available: v$INST_VER -> v$VERSION"
-
-        "$DLG" --3-button-dialog --title "$TITLE" \
-            --text "Update available!\n\nInstalled: v$INST_VER\nOn USB: v$VERSION\n\nFirmware: $FW" \
-            --ok-label "Update" --cancel-label "Manage" --button3-label "Close"
-        RC=$?
-        if [ $RC -eq 0 ]; then
-            log "User chose: Update v$INST_VER -> v$VERSION"
-            run_installer install
-        elif [ $RC -eq 1 ]; then
-            log "User chose: Manage"
-            show_manage_menu
-        else
-            log "User closed"
-        fi
-    else
-        log "Up to date v$INST_VER"
-        "$DLG" --question --title "$TITLE" \
-            --text "Tweaks Manager v$INST_VER (up to date)\nFirmware: $FW" \
-            --ok-label "Manage" --cancel-label "Close"
-        if [ $? -ne 0 ]; then log "User closed"; exit 0; fi
-        show_manage_menu
-    fi
+# ── Deploy patch library ────────────────────────────────────────────
+log "Deploying patch library..."
+mkdir -p /data_persist/tweaks/lib
+if [ -f "$LIB_SRC" ]; then
+    cp "$LIB_SRC" /data_persist/tweaks/lib/patch.sh
+    log "patch.sh copied to /data_persist/tweaks/lib/"
 else
-    log "Not installed, showing install flow"
-
-    "$DLG" --question --title "$TITLE" \
-        --text "Tweaks Manager v$VERSION\nFirmware: $FW\n\nAdds tweaks app to Applications." \
-        --ok-label "Install" --cancel-label "Close"
-    if [ $? -ne 0 ]; then log "User closed"; exit 0; fi
-
-    "$DLG" --question --title "$TITLE" \
-        --text "Install Tweaks Manager?\n\n- WiFi AP + SSH + iptables (permanent)\n- Daemon on /data_persist\n- System backup to USB\n\n$FACTS" \
-        --ok-label "Install" --cancel-label "Cancel"
-    if [ $? -eq 0 ]; then
-        log "User confirmed install"
-        run_installer install
-    else
-        log "User cancelled install"
-    fi
+    log "WARN: patch.sh not found on USB at $LIB_SRC"
 fi
 
-log "=== runner done ==="
+# ── Ensure tweaks directories exist ─────────────────────────────────
+mkdir -p /data_persist/tweaks/installed
+mkdir -p /data_persist/tweaks/backups
+mkdir -p /data_persist/tweaks/scripts
+
+# ── Start tweaksd from USB ──────────────────────────────────────────
+log "Starting tweaksd from USB..."
+panel "Starting daemon..."
+
+if killall -0 tweaksd 2>/dev/null; then
+    log "tweaksd already running, killing old instance"
+    killall tweaksd 2>/dev/null
+    sleep 1
+fi
+
+"$TWEAKSD_USB" </dev/null >/dev/null 2>&1
+sleep 2
+
+if [ -f /tmp/tweaksd.pid ] && kill -0 $(cat /tmp/tweaksd.pid) 2>/dev/null; then
+    log "tweaksd daemonized (PID $(cat /tmp/tweaksd.pid)) from $TWEAKSD_USB"
+    panel "tweaksd running"
+else
+    log "FATAL: tweaksd failed to start"
+    result "E_DAEMON" "tweaksd failed to start." "Check logs." ""
+    exit 1
+fi
+
+# ── Deploy tweaks-menu.js to Opera userjs ───────────────────────────
+log "Deploying tweaks-menu.js to Opera..."
+panel "Deploying UI..."
+
+OPERA_USERJS="/jci/opera/opera_dir/userjs"
+OPERA_INI="/jci/opera/opera_home/opera.ini"
+
+mount -o remount,rw / 2>/dev/null
+
+if ! grep -qi 'User JavaScript=1' "$OPERA_INI" 2>/dev/null; then
+    if grep -qi '\[User Prefs\]' "$OPERA_INI" 2>/dev/null; then
+        sed -i '/\[User Prefs\]/a User JavaScript=1' "$OPERA_INI" 2>/dev/null
+    else
+        printf '\n[User Prefs]\nUser JavaScript=1\n' >> "$OPERA_INI" 2>/dev/null
+    fi
+    log "Enabled User JavaScript in opera.ini"
+fi
+
+if ! grep -qi 'User JavaScript File=' "$OPERA_INI" 2>/dev/null; then
+    sed -i "/\[User Prefs\]/a User JavaScript File=$OPERA_USERJS" "$OPERA_INI" 2>/dev/null
+fi
+
+mkdir -p "$OPERA_USERJS"
+cp "$USERJS_SRC" "$OPERA_USERJS/tweaks-menu.js"
+log "tweaks-menu.js deployed to $OPERA_USERJS"
+
+mount -o remount,ro / 2>/dev/null
+
+# ── Restart Opera to load userjs ────────────────────────────────────
+log "Restarting Opera to load UI..."
+panel "Restarting UI..."
+
+killall opera 2>/dev/null
+sleep 3
+log "Opera restarted — UI will auto-open"
+
+# ── Done ────────────────────────────────────────────────────────────
+log "=== Tweaks Manager 2.0 ready ==="
+panel "Ready"
+
+finish "Tweaks Manager ready.\n\nUI will appear in a few seconds.\nManage tweaks from the overlay."
