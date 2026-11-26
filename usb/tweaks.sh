@@ -86,6 +86,15 @@ echo "=== Tweaks Manager runner | $FACTS | uptime $(cut -d' ' -f1 /proc/uptime 2
 
 log() { echo "[$(date "+%H:%M:%S" 2>/dev/null)] $*"; }
 
+# ── Portable sed -i (macOS needs '', busybox does not) ─────────────
+_sed_i() {
+    if [ "$(uname)" = "Darwin" ]; then
+        sed -i '' "$@"
+    else
+        sed -i "$@"
+    fi
+}
+
 # ── Panel fallback (XSS progress for JCI GUI) ──────────────────────
 panel() {
     echo "window.__usbStatus='$1';" > /tmp/tweaks-usb-status.js 2>/dev/null
@@ -212,15 +221,77 @@ if [ "$FW_NUM" != "74.00.324" ]; then
     log "User continued despite FW warning"
 fi
 
-# ── User confirmation ───────────────────────────────────────────────
+# ── Main menu (3 choices) ──────────────────────────────────────────
+# jci-dialog supports only 2 buttons, so: first ask Start/Recovery,
+# then confirm each choice (with Close as cancel on the first dialog).
 "$DLG" --question --title "$TITLE" \
-    --text "Tweaks Manager v$VERSION\nFirmware: $FW\n\nStart tweak manager from USB?\n(Daemon runs only while USB is inserted)" \
-    --ok-label "Start" --cancel-label "Cancel"
-if [ $? -ne 0 ]; then
-    log "User cancelled"
+    --text "Tweaks Manager v$VERSION\nFirmware: $FW\n\nChoose an action:" \
+    --ok-label "Start Manager" --cancel-label "Recovery"
+CHOICE=$?
+
+if [ $CHOICE -eq 0 ]; then
+    # User chose Start — confirm
+    "$DLG" --question --title "$TITLE" \
+        --text "Start tweak manager from USB?\n(Daemon runs only while USB is inserted)" \
+        --ok-label "Start" --cancel-label "Close"
+    if [ $? -ne 0 ]; then
+        log "User cancelled start"
+        exit 0
+    fi
+    log "User confirmed start"
+else
+    # User chose Recovery — confirm
+    "$DLG" --question --title "$TITLE" \
+        --text "Recovery: remove all tweaks traces from CMU?\n\nThis will:\n- Remove UI overlay (tweaks-menu.js)\n- Restore opera.ini\n- Remove tweak patches from stage_wifi.sh\n- Stop tweaksd/sshd processes\n\nCMU will reboot after cleanup." \
+        --ok-label "Clean up" --cancel-label "Close"
+    if [ $? -ne 0 ]; then
+        log "User cancelled recovery"
+        exit 0
+    fi
+    log "User confirmed recovery"
+
+    # ── Recovery: clean up CMU ─────────────────────────────────────
+    log "=== RECOVERY MODE ==="
+    panel "Recovery..."
+    mount -o remount,rw / 2>/dev/null
+
+    # Remove tweaks-menu.js
+    if [ -f /jci/opera/opera_dir/userjs/tweaks-menu.js ]; then
+        rm -f /jci/opera/opera_dir/userjs/tweaks-menu.js
+        log "Removed tweaks-menu.js"
+    fi
+
+    # Restore opera.ini — remove UserJS lines
+    OPERA_INI="/jci/opera/opera_home/opera.ini"
+    if [ -f "$OPERA_INI" ]; then
+        _sed_i '/^User JavaScript=1$/d' "$OPERA_INI" 2>/dev/null
+        _sed_i '/^User JavaScript File=/d' "$OPERA_INI" 2>/dev/null
+        log "Cleaned opera.ini"
+    fi
+
+    # Remove ALL tweak marker blocks from stage_wifi.sh
+    STAGE_WIFI="/jci/scripts/stage_wifi.sh"
+    if [ -f "$STAGE_WIFI" ] && grep -q '# tweaks:' "$STAGE_WIFI" 2>/dev/null; then
+        _sed_i '/# tweaks:.*:begin/,/# tweaks:.*:end/d' "$STAGE_WIFI" 2>/dev/null
+        log "Removed tweak markers from stage_wifi.sh"
+    fi
+
+    mount -o remount,ro / 2>/dev/null
+
+    # Kill running processes
+    killall tweaksd 2>/dev/null && log "Killed tweaksd"
+    killall sshd 2>/dev/null && log "Killed sshd"
+
+    # Clean data_persist traces
+    rm -rf /data_persist/tweaks 2>/dev/null && log "Removed /data_persist/tweaks"
+
+    log "=== Recovery complete ==="
+    result "OK" "Recovery complete." "All tweaks traces removed.\nCMU will reboot now." ""
+    sync
+    sleep 3
+    reboot
     exit 0
 fi
-log "User confirmed start"
 
 # ── Deploy patch library ────────────────────────────────────────────
 log "Deploying patch library..."
