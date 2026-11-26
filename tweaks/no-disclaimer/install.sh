@@ -23,8 +23,6 @@ if grep -q '_noMoreDisclaimer' "$SYSAPP" 2>/dev/null; then
     exit 0
 fi
 
-mount -o remount,rw / 2>/dev/null
-
 patch_begin "$SYSAPP" "no-disclaimer"
 
 # 1. Change Disclaimer template from Dialog3Tmplt to NoCtrlTmplt
@@ -47,13 +45,14 @@ patch_sed 's/"displayedFunction" *: *this\._displayedDisclaimer\.bind(this)/\/\/
     "remove displayedFunction bind"
 
 # 5. Append _noMoreDisclaimer function
-patch_append '/* tweaks:no-disclaimer */
+patch_append '/* tweaks:no-disclaimer:begin */
 systemApp.prototype._noMoreDisclaimer = function() {
     framework.sendEventToMmui("system", "DisposeIntroVideo");
     this._disclaimerTime.remaining = 3500;
     log.debug("No more disclaimer — auto-accepting");
     framework.sendEventToMmui("common", "Global.Yes");
-};' "add _noMoreDisclaimer function"
+};
+/* tweaks:no-disclaimer:end */' "add _noMoreDisclaimer function"
 
 # Verify
 patch_verify '_noMoreDisclaimer' "function exists"
@@ -63,12 +62,10 @@ patch_verify_not 'defaultSelectCallback.*_selectCallbackDisclaimer' "old selectC
 RES=$(patch_commit)
 RET=$?
 
-mount -o remount,ro / 2>/dev/null
-
 if [ $RET -ne 0 ]; then
     echo "$RES"
     exit 1
 fi
 echo "$RES"
 
-(sleep 5 && reboot) >/dev/null 2>&1 &
+[ "${NO_REBOOT:-0}" != "1" ] && (sleep 5 && reboot) >/dev/null 2>&1 &

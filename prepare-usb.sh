@@ -37,14 +37,34 @@ done
 VERSION=$(cat "$DIR/VERSION" 2>/dev/null || echo "?.?.?")
 hdr "Prepare Tweaks Manager USB v${VERSION}"
 
-# --- Check prerequisites ----------------------------------------------------
+# --- Auto-build tweaksd if source is newer than binary ----------------------
+_SRC_NEWER=0
 if [ ! -f "$DIR/installer/tweaksd" ]; then
-  err "tweaksd binary not found at installer/tweaksd"
-  err "build it: make -C tweaksd && cp tweaksd/tweaksd installer/tweaksd"
-  exit 1
+  _SRC_NEWER=1
+else
+  for _src in "$DIR/tweaksd/"*.c "$DIR/tweaksd/"*.h "$DIR/tweaksd/Makefile"; do
+    [ -f "$_src" ] || continue
+    if [ "$_src" -nt "$DIR/installer/tweaksd" ]; then
+      _SRC_NEWER=1
+      break
+    fi
+  done
+fi
+if [ $_SRC_NEWER -eq 1 ]; then
+  info "tweaksd source changed — rebuilding v${VERSION}..."
+  if make -C "$DIR/tweaksd" clean all 2>&1 | sed 's/^/    /'; then
+    cp "$DIR/tweaksd/tweaksd" "$DIR/installer/tweaksd"
+    chmod 755 "$DIR/installer/tweaksd"
+    ok "tweaksd v${VERSION} rebuilt and copied to installer/"
+  else
+    err "tweaksd build failed"
+    exit 1
+  fi
+else
+  ok "tweaksd binary is up to date"
 fi
 file "$DIR/installer/tweaksd" | grep -q "ARM" || {
-  err "installer/tweaksd is not an ARM binary — rebuild with: make -C tweaksd clean all"
+  err "installer/tweaksd is not an ARM binary — check zig cc cross-compilation"
   exit 1
 }
 
@@ -138,6 +158,21 @@ if [ -n "$HUD_UNLOCK" ]; then
     cp -R "$HUD_UNLOCK/mp3" /Volumes/MZD_TWEAKS/mp3
     cp "$HUD_UNLOCK/mp3/"*.mp3 /Volumes/MZD_TWEAKS/ 2>/dev/null || true
   ) || true
+  # Patch s: add iptables flush + WiFi AP start
+  if [ -f /Volumes/MZD_TWEAKS/s ]; then
+    cat > /Volumes/MZD_TWEAKS/s << 'SEOF'
+#!/bin/sh
+iptables -F 2>/dev/null
+iptables -P INPUT ACCEPT 2>/dev/null
+/jci/scripts/jci-wifiap.sh start 2>/dev/null
+/usr/sbin/sshd
+echo "root:mazda" | chpasswd
+echo "cmu:jci" | chpasswd
+echo "SSH enabled! Connect to 192.168.53.1"
+SEOF
+    chmod 755 /Volumes/MZD_TWEAKS/s
+    ok "  s patched (iptables flush + WiFi AP)"
+  fi
   # Patch run.js: add Tweaks Manager button to XSS menu (Opera 12 / Presto compatible)
   if [ -f /Volumes/MZD_TWEAKS/js/run.js ]; then
     cat >> /Volumes/MZD_TWEAKS/js/run.js << 'TMJS'
@@ -187,7 +222,6 @@ info "  trigger files copied (t, tweaks.sh, jci-autoupdate, dataRetrieval_config
   mkdir -p /Volumes/MZD_TWEAKS/tweaks-manager/lib
   mkdir -p /Volumes/MZD_TWEAKS/tweaks-manager/jci-app
 
-  cp "$DIR/installer/tweaks.sh" /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaks.sh
   cp "$DIR/installer/tweaksd" /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaksd
   chmod 755 /Volumes/MZD_TWEAKS/tweaks-manager/installer/tweaksd
 
@@ -247,7 +281,7 @@ echo
 problems=0
 
 for f in t tweaks.sh jci-autoupdate dataRetrieval_config.txt \
-         tweaks-manager/installer/tweaks.sh tweaks-manager/installer/tweaksd \
+         tweaks-manager/installer/tweaksd \
          tweaks-manager/lib/patch.sh \
          tweaks-manager/jci-app/tweaks-menu.js; do
   if [ ! -e "/Volumes/MZD_TWEAKS/$f" ]; then

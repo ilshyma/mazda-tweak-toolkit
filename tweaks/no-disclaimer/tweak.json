@@ -1,7 +1,7 @@
 {
   "id": "no-disclaimer",
   "name": "No More Disclaimer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Auto-dismisses the safety disclaimer on startup (3.5s wait removed)",
   "author": "Tweaks Manager",
   "min_firmware": "74.00.324",

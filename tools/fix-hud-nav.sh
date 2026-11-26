@@ -11,19 +11,19 @@ ACTION="${1:-diagnose}"
 log() { echo "[hud-fix] $*"; }
 
 get_vbs() {
-    dbus-send --system --print-reply --dest=com.jci.vbs.settings \
+    dbus-send --address=unix:path=/tmp/dbus_service_socket --print-reply --dest=com.jci.vbs.settings \
         /com/jci/vbs/settings com.jci.vbs.settings.Query \
         string:"$1" $2 2>/dev/null | grep -E 'variant|string|int32|boolean' | head -1
 }
 
 set_vbs() {
-    dbus-send --system --dest=com.jci.vbs.settings \
+    dbus-send --address=unix:path=/tmp/dbus_service_socket --dest=com.jci.vbs.settings \
         /com/jci/vbs/settings com.jci.vbs.settings.Set \
         string:"$1" $2 2>/dev/null
 }
 
 send_mmui() {
-    dbus-send --system --dest=com.jci.lds \
+    dbus-send --address=unix:path=/tmp/dbus_service_socket --dest=com.jci.lds \
         /com/jci/lds com.jci.lds.Send \
         string:"$1" string:"$2" 2>/dev/null
 }

@@ -6,7 +6,35 @@
 #include "log.h"
 #include "usb.h"
 
+static void log_rotate(void) {
+    struct stat st;
+    if (stat(LOG_FILE, &st) != 0 || st.st_size < LOG_MAX_SIZE)
+        return;
+    /* keep last ~256KB */
+    FILE *f = fopen(LOG_FILE, "r");
+    if (!f) return;
+    long keep = 256 * 1024;
+    fseek(f, st.st_size - keep, SEEK_SET);
+    /* align to next newline */
+    int c;
+    while ((c = fgetc(f)) != EOF && c != '\n') {}
+    long start = ftell(f);
+    long len = st.st_size - start;
+    char *buf = malloc(len + 1);
+    if (!buf) { fclose(f); return; }
+    long n = fread(buf, 1, len, f);
+    fclose(f);
+    f = fopen(LOG_FILE, "w");
+    if (f) {
+        fprintf(f, "[LOG] rotated (%ld -> %ld bytes)\n", (long)st.st_size, n);
+        fwrite(buf, 1, n, f);
+        fclose(f);
+    }
+    free(buf);
+}
+
 void tweaksd_log(const char *op, const char *tweak_id, const char *detail) {
+    log_rotate();
     FILE *f = fopen(LOG_FILE, "a");
     if (!f) return;
 
@@ -47,9 +75,9 @@ int tweaksd_log_read(char *out, int outlen, int last_n) {
         return 0;
     }
 
-    char lines[512][256];
+    char lines[128][256];
     int total = 0;
-    while (total < 512 && fgets(lines[total % 512], sizeof(lines[0]), f))
+    while (total < 128 && fgets(lines[total % 128], sizeof(lines[0]), f))
         total++;
     fclose(f);
 
@@ -58,13 +86,13 @@ int tweaksd_log_read(char *out, int outlen, int last_n) {
 
     int pos = snprintf(out, outlen, "{\"log\":[");
     for (int i = start; i < total && pos < outlen - 300; i++) {
-        lines[i % 512][strcspn(lines[i % 512], "\n\r")] = '\0';
+        lines[i % 128][strcspn(lines[i % 128], "\n\r")] = '\0';
         char esc[512];
         int ej = 0;
-        for (int c = 0; lines[i % 512][c] && ej < (int)sizeof(esc) - 2; c++) {
-            if (lines[i % 512][c] == '"' || lines[i % 512][c] == '\\')
+        for (int c = 0; lines[i % 128][c] && ej < (int)sizeof(esc) - 2; c++) {
+            if (lines[i % 128][c] == '"' || lines[i % 128][c] == '\\')
                 esc[ej++] = '\\';
-            esc[ej++] = lines[i % 512][c];
+            esc[ej++] = lines[i % 128][c];
         }
         esc[ej] = '\0';
         if (i > start) out[pos++] = ',';

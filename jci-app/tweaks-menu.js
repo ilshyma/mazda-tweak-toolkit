@@ -1,8 +1,8 @@
 /*
  * Tweaks Manager v2 — Opera 12 / Presto UI
  * Pure DOM overlay, no framework deps. Inline styles (no CSS vars).
- * Shows TWEAKS button in Settings, fullscreen overlay with cards.
- * USB required — won't open without it (fool-proof).
+ * Shows TWEAKS button only when tweaksd daemon is alive (USB inserted).
+ * Hides completely when daemon stops (USB removed).
  * Mandatory backup+log sync to USB on every open.
  * Scaled for 7" 800x480 CMU screen.
  */
@@ -14,6 +14,7 @@
     var overlay = null;
     var btn = null;
     var visible = false;
+    var currentFilter = 'all';
     var cachedTweaks = null;
     var cachedVer = null;
     var cachedUsb = null;
@@ -73,13 +74,8 @@
         } catch(e) { cb(0, null); }
     }
 
-    /* ── Touch scrolling with inertia (CMU has no native scroll) ──── */
+    /* ── Touch scrolling (CMU has no real scroll) ──────────────────── */
     var scrollState = null;
-    var inertiaTimer = null;
-
-    function stopInertia() {
-        if (inertiaTimer) { clearInterval(inertiaTimer); inertiaTimer = null; }
-    }
 
     function enableScroll(container) {
         container.onmousedown = function(e) {
@@ -88,36 +84,20 @@
                 if (t.getAttribute && t.getAttribute('data-action')) return;
                 t = t.parentNode;
             }
-            stopInertia();
-            scrollState = { el: container, startY: e.clientY, startScroll: container.scrollTop, lastT: 0, prevY: e.clientY, velocity: 0 };
+            scrollState = { el: container, startY: e.clientY, startScroll: container.scrollTop, lastT: 0 };
         };
         container.onmousemove = function(e) {
             if (!scrollState) return;
             var now = (new Date()).getTime();
             if (now - scrollState.lastT < 32) return;
-            var dt = now - scrollState.lastT;
             scrollState.lastT = now;
-            var dy = (scrollState.startY - e.clientY) * 1.5;
+            var dy = scrollState.startY - e.clientY;
             scrollState.el.scrollTop = scrollState.startScroll + dy;
-            scrollState.velocity = (scrollState.prevY - e.clientY) / (dt || 1);
-            scrollState.prevY = e.clientY;
         };
-        function endDrag() {
-            if (!scrollState) return;
-            var v = scrollState.velocity * 1.5 * 16;
-            var el = scrollState.el;
-            scrollState = null;
-            if (Math.abs(v) < 2) return;
-            inertiaTimer = setInterval(function() {
-                v *= 0.92;
-                if (Math.abs(v) < 1) { stopInertia(); return; }
-                el.scrollTop += v;
-            }, 32);
-        }
-        container.onmouseup = endDrag;
+        container.onmouseup = function() { scrollState = null; };
         container.onmouseout = function(e) {
             if (scrollState && (!e.relatedTarget || !container.contains(e.relatedTarget)))
-                endDrag();
+                scrollState = null;
         };
     }
 
@@ -129,30 +109,15 @@
         btn = document.createElement('div');
         btn.id = 'tweaks-settings-btn';
         setS(btn, {
-            position: 'fixed', bottom: '12px', left: '12px',
+            position: 'fixed', bottom: '10px', left: '10px',
             width: '48px', height: '48px',
-            padding: '0', textAlign: 'center',
-            background: '#b91c1c', borderRadius: '50%',
-            zIndex: '99998', cursor: 'pointer',
-            display: 'none',
-            border: '1px solid #ef4444'
+            background: '#c0392b', color: '#fff', borderRadius: '50%',
+            zIndex: '99998', fontSize: '22px', fontWeight: 'bold',
+            fontFamily: 'sans-serif', cursor: 'pointer',
+            display: 'none', textAlign: 'center', lineHeight: '48px',
+            border: '2px solid #e74c3c'
         });
-        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="38" height="38" style="margin-top:5px">'
-            + '<rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="#fff" stroke-width="1.8"/>'
-            + '<text x="12" y="15" text-anchor="middle" fill="#fff" font-size="8" font-weight="bold" font-family="sans-serif">T</text>'
-            + '<line x1="8" y1="3" x2="8" y2="5" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="12" y1="3" x2="12" y2="5" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="16" y1="3" x2="16" y2="5" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="8" y1="19" x2="8" y2="21" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="12" y1="19" x2="12" y2="21" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="16" y1="19" x2="16" y2="21" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="3" y1="8" x2="5" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="3" y1="12" x2="5" y2="12" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="3" y1="16" x2="5" y2="16" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="19" y1="8" x2="21" y2="8" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="19" y1="12" x2="21" y2="12" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '<line x1="19" y1="16" x2="21" y2="16" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>'
-            + '</svg>';
+        btn.textContent = 'T';
         btn.onclick = function() { showUI(); };
         document.body.appendChild(btn);
         dbg('button created');
@@ -160,17 +125,35 @@
 
     function checkVisibility() {
         try {
-            var app = window.framework && window.framework._currentAppUiaId;
-            var show = (app === 'syssettings' || app === 'vehsettings');
-            if (show && !visible) {
-                if (btn) btn.style.display = 'block';
-                visible = true;
-            } else if (!show && visible) {
-                if (btn) btn.style.display = 'none';
-                if (overlay) overlay.style.display = 'none';
-                visible = false;
-            }
-        } catch(e) {}
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', TWEAKSD + '/api/version', true);
+            var done = false;
+            var timer = setTimeout(function() {
+                if (!done) { done = true; try { xhr.abort(); } catch(e) {} setVisible(false); }
+            }, 3000);
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4 && !done) {
+                    done = true;
+                    clearTimeout(timer);
+                    setVisible(xhr.status === 200);
+                }
+            };
+            xhr.onerror = function() {
+                if (!done) { done = true; clearTimeout(timer); setVisible(false); }
+            };
+            xhr.send();
+        } catch(e) { setVisible(false); }
+    }
+
+    function setVisible(show) {
+        if (show && !visible) {
+            if (btn) btn.style.display = 'block';
+            visible = true;
+        } else if (!show && visible) {
+            if (btn) btn.style.display = 'none';
+            if (overlay) overlay.style.display = 'none';
+            visible = false;
+        }
     }
 
     /* ── Header ────────────────────────────────────────────────────── */
@@ -180,6 +163,16 @@
             background: HDR_BG, borderBottom: '1px solid ' + CARD_BD,
             padding: '0 24px', zIndex: '2'
         });
+
+        var icon = mkEl('div', {
+            display: 'inline-block', verticalAlign: 'middle',
+            width: '48px', height: '48px', marginTop: '12px',
+            background: BTN_BG, borderRadius: '12px',
+            textAlign: 'center', lineHeight: '48px',
+            fontSize: '20px', color: CYAN, marginRight: '14px',
+            fontWeight: 'bold'
+        }, 'TM');
+        hdr.appendChild(icon);
 
         var title = mkEl('span', {
             fontSize: '22px', fontWeight: 'bold', color: TXT,
@@ -198,13 +191,13 @@
         verBadge.textContent = '...';
         hdr.appendChild(verBadge);
 
-        var usbStatus = mkEl('span', {
+        var status = mkEl('span', {
             display: 'inline-block', verticalAlign: 'middle',
             marginLeft: '18px', fontSize: '16px', color: TXT3,
             lineHeight: '72px'
         });
-        usbStatus.id = 'tm-usb-status';
-        hdr.appendChild(usbStatus);
+        status.id = 'tm-header-status';
+        hdr.appendChild(status);
 
         var close = mkEl('div', {
             position: 'absolute', right: '18px', top: '14px',
@@ -214,8 +207,6 @@
             border: '1px solid ' + CARD_BD
         });
         close.setAttribute('data-action', '1');
-        var closeX = mkEl('span', { color: TXT3, marginRight: '8px' }, '✕');
-        close.appendChild(closeX);
         close.appendChild(document.createTextNode('Close'));
         close.onclick = function() { overlay.style.display = 'none'; };
         hdr.appendChild(close);
@@ -235,6 +226,75 @@
         return bar;
     }
 
+    /* ── Footer ────────────────────────────────────────────────────── */
+    function buildFooter() {
+        var ftr = mkEl('div', {
+            position: 'absolute', bottom: '0', left: '0', right: '0', height: '72px',
+            background: HDR_BG, borderTop: '1px solid ' + CARD_BD,
+            padding: '12px 24px', zIndex: '2'
+        });
+
+        var rb = mkFooterBtn('Refresh', BTN_BG, TXT2, function() {
+            loadData();
+        });
+        ftr.appendChild(rb);
+
+        var sb = mkFooterBtn('Scan USB', '#0891b2', '#fff', function() {
+            sb.firstChild.nodeValue = 'Scanning...';
+            api('GET', '/api/usb/scan', function(s, d) {
+                cachedUsb = d;
+                sb.firstChild.nodeValue = 'Scan USB';
+                updateHeaderStatus();
+                loadData();
+            });
+        });
+        setS(sb, { marginLeft: '12px' });
+        ftr.appendChild(sb);
+
+        var tabs = mkEl('span', {
+            display: 'inline-block', marginLeft: '20px',
+            background: BTN_BG, borderRadius: '9px',
+            overflow: 'hidden', verticalAlign: 'middle',
+            border: '1px solid ' + CARD_BD
+        });
+        tabs.id = 'tm-filter-tabs';
+
+        var filters = [
+            { key: 'all', label: 'All' },
+            { key: 'installed', label: 'Installed' },
+            { key: 'available', label: 'On USB' }
+        ];
+        for (var i = 0; i < filters.length; i++) {
+            (function(f) {
+                var tab = mkEl('span', {
+                    display: 'inline-block', padding: '10px 20px',
+                    fontSize: '16px', fontWeight: 'bold', cursor: 'pointer',
+                    color: f.key === 'all' ? '#fff' : TXT3,
+                    background: f.key === 'all' ? BTN_BG2 : 'transparent'
+                });
+                tab.setAttribute('data-action', '1');
+                tab.setAttribute('data-filter', f.key);
+                tab.textContent = f.label;
+                tab.onclick = function() { setFilter(f.key); };
+                tabs.appendChild(tab);
+            })(filters[i]);
+        }
+        ftr.appendChild(tabs);
+
+        return ftr;
+    }
+
+    function mkFooterBtn(label, bg, color, onclick) {
+        var b = mkEl('span', {
+            display: 'inline-block', padding: '12px 24px',
+            background: bg, color: color, borderRadius: '9px',
+            cursor: 'pointer', fontSize: '16px', fontWeight: 'bold',
+            verticalAlign: 'middle', border: '1px solid ' + CARD_BD
+        }, label);
+        b.setAttribute('data-action', '1');
+        b.onclick = onclick;
+        return b;
+    }
 
     /* ── Main overlay ─────────────────────────────────────────────── */
     function showUI() {
@@ -252,12 +312,14 @@
         overlay.appendChild(buildStatusBar());
 
         var content = mkEl('div', {
-            position: 'absolute', top: '73px', bottom: '0', left: '0', right: '0',
+            position: 'absolute', top: '73px', bottom: '73px', left: '0', right: '0',
             overflowY: 'auto', overflowX: 'hidden', padding: '16px 24px'
         });
         content.id = 'tweaks-content';
         enableScroll(content);
         overlay.appendChild(content);
+
+        overlay.appendChild(buildFooter());
         document.body.appendChild(overlay);
 
         loadData();
@@ -283,7 +345,7 @@
 
             api('GET', '/api/usb/scan', function(s2, usb) {
                 cachedUsb = usb;
-                updateUsbStatus();
+                updateHeaderStatus();
 
                 if (!usb || !usb.usb_mounted) {
                     renderNoUsb(c);
@@ -300,6 +362,7 @@
                         api('GET', '/api/tweaks/list', function(s4, data) {
                             cachedTweaks = data;
                             renderTweaks(c);
+                            updateFilterCounts();
                         });
                     });
                 });
@@ -317,8 +380,8 @@
             background: BTN_BG, borderRadius: '20px',
             textAlign: 'center', lineHeight: '80px',
             fontSize: '36px', color: YELLOW, marginBottom: '20px',
-            border: '1px solid ' + CARD_BD
-        }, '⚠');
+            border: '1px solid ' + CARD_BD, fontWeight: 'bold'
+        }, 'USB');
         box.appendChild(iconWrap);
 
         box.appendChild(mkEl('div', {
@@ -356,7 +419,7 @@
         var c = document.getElementById('tweaks-content');
         if (bar) {
             bar.style.display = 'block';
-            bar.textContent = '↻  Syncing backup + logs to USB...';
+            bar.textContent = 'Syncing backup + logs to USB...';
             bar.style.color = CYAN;
         }
         if (c) c.style.top = '112px';
@@ -368,13 +431,13 @@
 
                 if (bar) {
                     if (bOk && lOk) {
-                        bar.textContent = '✓  Backup + logs synced to USB';
+                        bar.textContent = 'OK -- Backup + logs synced to USB';
                         bar.style.color = GREEN;
                     } else if (bOk) {
-                        bar.textContent = '✓  Backup synced  |  ✗ log export failed';
+                        bar.textContent = 'OK -- Backup synced | FAIL -- log export';
                         bar.style.color = YELLOW;
                     } else {
-                        bar.textContent = '✗  Sync failed — check USB';
+                        bar.textContent = 'FAIL -- Sync failed, check USB';
                         bar.style.color = RED;
                     }
                 }
@@ -394,16 +457,70 @@
         if (el && cachedVer) el.textContent = 'v' + (cachedVer.version || '?');
     }
 
-    function updateUsbStatus() {
-        var el = document.getElementById('tm-usb-status');
+    function updateHeaderStatus() {
+        var el = document.getElementById('tm-header-status');
         if (!el) return;
-        if (cachedUsb && cachedUsb.usb_mounted) {
-            el.textContent = '●  USB';
-            el.style.color = CYAN;
-        } else {
-            el.textContent = '○  No USB';
-            el.style.color = TXT3;
+        el.innerHTML = '';
+
+        var count = 0;
+        if (cachedTweaks && cachedTweaks.tweaks) {
+            for (var i = 0; i < cachedTweaks.tweaks.length; i++) {
+                if (cachedTweaks.tweaks[i].installed) count++;
+            }
         }
+
+        el.appendChild(document.createTextNode(count + ' installed'));
+
+        var usbDot = mkEl('span', {
+            marginLeft: '18px',
+            color: (cachedUsb && cachedUsb.usb_mounted) ? CYAN : TXT3
+        });
+        usbDot.textContent = (cachedUsb && cachedUsb.usb_mounted)
+            ? '[ USB ]'
+            : 'No USB';
+        el.appendChild(usbDot);
+    }
+
+    /* ── Filter tabs ──────────────────────────────────────────────── */
+    function setFilter(f) {
+        currentFilter = f;
+        var tabs = document.getElementById('tm-filter-tabs');
+        if (tabs) {
+            var children = tabs.childNodes;
+            for (var i = 0; i < children.length; i++) {
+                var child = children[i];
+                if (child.getAttribute) {
+                    var key = child.getAttribute('data-filter');
+                    child.style.background = (key === f) ? BTN_BG2 : 'transparent';
+                    child.style.color = (key === f) ? '#fff' : TXT3;
+                }
+            }
+        }
+        var c = document.getElementById('tweaks-content');
+        if (c && cachedTweaks) renderTweaks(c);
+    }
+
+    function updateFilterCounts() {
+        if (!cachedTweaks || !cachedTweaks.tweaks) return;
+        var all = cachedTweaks.tweaks.length;
+        var inst = 0, avail = 0;
+        for (var i = 0; i < cachedTweaks.tweaks.length; i++) {
+            if (cachedTweaks.tweaks[i].installed) inst++;
+            if (cachedTweaks.tweaks[i].has_source && !cachedTweaks.tweaks[i].installed) avail++;
+        }
+        var tabs = document.getElementById('tm-filter-tabs');
+        if (!tabs) return;
+        var children = tabs.childNodes;
+        for (var j = 0; j < children.length; j++) {
+            var child = children[j];
+            if (!child.getAttribute) continue;
+            var key = child.getAttribute('data-filter');
+            if (key === 'all') child.textContent = 'All (' + all + ')';
+            else if (key === 'installed') child.textContent = 'Installed (' + inst + ')';
+            else if (key === 'available') child.textContent = 'On USB (' + avail + ')';
+        }
+
+        updateHeaderStatus();
     }
 
     /* ── Error display ────────────────────────────────────────────── */
@@ -450,7 +567,7 @@
             dbtn.style.background = BTN_BG2;
             api('POST', '/api/dump/create', function(s, res) {
                 if (res && res.ok) {
-                    dbtn.textContent = '✓ Done';
+                    dbtn.textContent = 'Done!';
                     dbtn.style.background = GREEN;
                     setTimeout(function() { loadData(); }, 1000);
                 } else {
@@ -478,41 +595,75 @@
         }
 
         var tweaks = cachedTweaks.tweaks;
-        if (tweaks.length === 0) {
+        var filtered = [];
+        for (var i = 0; i < tweaks.length; i++) {
+            var t = tweaks[i];
+            if (currentFilter === 'installed' && !t.installed) continue;
+            if (currentFilter === 'available' && (t.installed || !t.has_source)) continue;
+            filtered.push(t);
+        }
+
+        if (filtered.length === 0) {
+            var msg = currentFilter === 'available'
+                ? 'No new tweaks on USB'
+                : currentFilter === 'installed'
+                    ? 'No tweaks installed yet'
+                    : 'No tweaks found. Insert USB with tweaks.';
             c.appendChild(mkEl('div', {
                 color: TXT3, fontSize: '20px', padding: '60px 0', textAlign: 'center'
-            }, 'No tweaks found. Insert USB with tweaks.'));
+            }, msg));
             return;
         }
 
-        for (var i = 0; i < tweaks.length; i++) {
-            c.appendChild(makeTweakCard(tweaks[i]));
+        for (var j = 0; j < filtered.length; j++) {
+            c.appendChild(makeTweakCard(filtered[j]));
         }
     }
 
     function makeTweakCard(t) {
+        var hasUpdate = t.installed && t.update_available && t.has_source;
         var card = mkEl('div', {
-            position: 'relative',
             background: CARD_BG,
             border: '1px solid ' + CARD_BD,
             borderLeft: '4px solid ' + (t.installed ? GREEN : BTN_BG2),
             borderRadius: '10px',
-            padding: '18px 24px',
-            paddingRight: '200px',
-            marginBottom: '12px'
+            padding: '14px 20px',
+            marginBottom: '10px',
+            overflow: 'hidden'
         });
 
-        var titleRow = mkEl('div', { marginBottom: '8px' });
+        // Button area floated right — MUST be first in DOM for float to work
+        var btnArea = mkEl('div', {
+            cssFloat: 'right',
+            width: '120px',
+            textAlign: 'right',
+            paddingLeft: '12px',
+            paddingTop: '2px'
+        });
+
+        if (t.installed) {
+            if (hasUpdate) {
+                btnArea.appendChild(makeActionBtn('UPDATE', CYAN, t, 'update'));
+                btnArea.appendChild(mkEl('div', { height: '6px' }));
+            }
+            btnArea.appendChild(makeActionBtn('UNINSTALL', RED, t, 'uninstall'));
+        } else if (t.has_source) {
+            btnArea.appendChild(makeActionBtn('INSTALL', GREEN, t, 'install'));
+        }
+        card.appendChild(btnArea);
+
+        // Content area — flows naturally, never overlaps float
+        var titleRow = mkEl('div', { marginBottom: '4px' });
         titleRow.appendChild(mkEl('span', {
-            fontSize: '20px', fontWeight: 'bold', color: TXT
+            fontSize: '18px', fontWeight: 'bold', color: TXT
         }, t.name));
 
         var ver = t.installed ? t.installed_version : t.version;
         if (ver) {
             var vbadge = mkEl('span', {
-                display: 'inline-block', marginLeft: '10px',
-                padding: '2px 10px', borderRadius: '12px',
-                fontSize: '14px', color: TXT3,
+                display: 'inline-block', marginLeft: '8px',
+                padding: '1px 8px', borderRadius: '10px',
+                fontSize: '13px', color: TXT3,
                 background: BTN_BG, border: '1px solid ' + BTN_BG2,
                 verticalAlign: 'middle'
             }, 'v' + ver);
@@ -522,55 +673,38 @@
 
         if (t.description) {
             card.appendChild(mkEl('div', {
-                fontSize: '16px', color: TXT2, marginBottom: '10px',
-                lineHeight: '1.4'
+                fontSize: '14px', color: TXT2, marginBottom: '6px',
+                lineHeight: '1.3'
             }, t.description));
         }
 
         var badges = mkEl('div', { fontSize: '0' });
 
         if (t.installed) {
-            badges.appendChild(makeBadge('●  INSTALLED', GREEN));
+            badges.appendChild(makeBadge('INSTALLED', GREEN));
+
             if (t.update_available) {
-                badges.appendChild(makeBadge('↑  UPDATE v' + t.version, BLUE));
+                badges.appendChild(makeBadge('UPDATE v' + t.version, BLUE));
             }
-        } else if (t.setup) {
-            badges.appendChild(makeBadge('●  READY', CYAN));
-        } else if (t.has_source) {
-            badges.appendChild(makeBadge('AVAILABLE ON USB', TXT3));
         } else {
-            badges.appendChild(makeBadge('NOT ON USB', TXT3));
+            if (t.has_source) {
+                badges.appendChild(makeBadge('AVAILABLE', TXT3));
+            } else {
+                badges.appendChild(makeBadge('NOT ON USB', TXT3));
+            }
         }
         card.appendChild(badges);
 
-        var btnArea = mkEl('div', {
-            position: 'absolute', right: '20px', top: '50%',
-            marginTop: '-24px'
-        });
-
-        if (t.installed) {
-            if (t.update_available && t.has_source) {
-                btnArea.appendChild(makeActionBtn('UPDATE', CYAN, t, 'install'));
-                btnArea.appendChild(mkEl('span', { display: 'inline-block', width: '8px' }));
-            }
-            btnArea.appendChild(makeActionBtn('UNINSTALL', RED, t, 'uninstall'));
-        } else if (t.setup) {
-            btnArea.appendChild(makeActionBtn('INSTALL', GREEN, t, 'install'));
-        } else if (t.has_source) {
-            btnArea.appendChild(makeActionBtn('SETUP', CYAN, t, 'setup'));
-        }
-
-        card.appendChild(btnArea);
         return card;
     }
 
     function makeBadge(text, color) {
         return mkEl('span', {
             display: 'inline-block',
-            padding: '4px 14px',
-            marginRight: '8px',
-            borderRadius: '6px',
-            fontSize: '14px',
+            padding: '2px 10px',
+            marginRight: '6px',
+            borderRadius: '4px',
+            fontSize: '12px',
             fontWeight: 'bold',
             letterSpacing: '1px',
             color: color,
@@ -580,87 +714,61 @@
     }
 
     var actionBusy = false;
+    var actionBusyTimer = null;
 
-    function reloadList() {
-        api('GET', '/api/tweaks/list', function(s, data) {
-            if (data) {
-                cachedTweaks = data;
-                var c = document.getElementById('tm-content');
-                if (c) renderTweaks(c);
-            }
-        });
+    function resetActionBusy() {
+        actionBusy = false;
+        if (actionBusyTimer) { clearTimeout(actionBusyTimer); actionBusyTimer = null; }
     }
 
     function makeActionBtn(label, color, tweak, action) {
-        var filled = (label === 'UPDATE' || label === 'SETUP');
         var b = mkEl('span', {
-            display: 'inline-block', padding: '12px 28px',
-            background: filled ? CYAN : 'transparent',
-            color: filled ? '#fff' : color,
-            borderRadius: '8px', cursor: 'pointer',
-            fontSize: '16px', fontWeight: 'bold',
-            letterSpacing: '2px',
+            display: 'inline-block', padding: '8px 18px',
+            background: 'transparent', color: color,
+            borderRadius: '6px', cursor: 'pointer',
+            fontSize: '14px', fontWeight: 'bold',
+            letterSpacing: '1px',
             border: '1px solid ' + color
         }, label);
         b.setAttribute('data-action', '1');
         b.onclick = function() {
             if (actionBusy) return;
-            actionBusy = true;
-
-            if (action === 'setup') {
-                showModal('Copying ' + tweak.name + ' to CMU...');
-                api('POST', '/api/tweaks/setup/' + tweak.id, function(s, res) {
-                    if (res && res.ok) {
-                        actionBusy = false;
-                        updateModal('✓', 'Ready to install', '', GREEN, 1500);
-                        setTimeout(function() { reloadList(); }, 1600);
-                    } else {
-                        actionBusy = false;
-                        var err = (res && res.error) || 'Setup failed';
-                        updateModal('✗', 'Setup failed', err, RED, 3000);
-                    }
+            if (action === 'uninstall') {
+                showConfirmModal('Uninstall ' + tweak.name + '?', function() {
+                    doAction(tweak, action);
                 });
                 return;
             }
-
-            var isUpd = (action === 'install' && tweak.installed);
-
-            if (isUpd) {
-                showModal('Updating ' + tweak.name + '...');
-                api('POST', '/api/tweaks/update/' + tweak.id, function(s, res) {
-                    if (res && res.ok) {
-                        if (res.reboot) {
-                            showRebootModal('Updated');
-                        } else {
-                            actionBusy = false;
-                            updateModal('✓', 'Updated', '', GREEN, 1500);
-                        }
-                    } else {
-                        actionBusy = false;
-                        var err = (res && res.error) || 'Update failed';
-                        updateModal('✗', 'Update failed', err, RED, 3000);
-                    }
-                });
-            } else {
-                var verb = action === 'install' ? 'Installing' : 'Uninstalling';
-                showModal(verb + ' ' + tweak.name + '...');
-                api('POST', '/api/tweaks/' + action + '/' + tweak.id, function(s, res) {
-                    if (res && res.ok) {
-                        if (res.reboot) {
-                            showRebootModal(action === 'install' ? 'Installed' : 'Uninstalled');
-                        } else {
-                            actionBusy = false;
-                            updateModal('✓', 'Done', '', GREEN, 1500);
-                        }
-                    } else {
-                        actionBusy = false;
-                        var err = (res && res.error) || 'Operation failed';
-                        updateModal('✗', 'Failed', err, RED, 3000);
-                    }
-                });
-            }
+            doAction(tweak, action);
         };
         return b;
+    }
+
+    function doAction(tweak, action) {
+        actionBusy = true;
+        actionBusyTimer = setTimeout(function() { resetActionBusy(); }, 135000);
+        var verb = action === 'install' ? 'Installing' : action === 'update' ? 'Updating' : 'Uninstalling';
+        showModal(verb + ' ' + tweak.name + '...');
+        api('POST', '/api/tweaks/' + action + '/' + tweak.id, function(s, res) {
+            if (res && res.ok) {
+                if (res.reboot) {
+                    updateModal('>>>', 'Rebooting...', 'System will restart in a few seconds', CYAN, 0);
+                    setTimeout(function() {
+                        resetActionBusy();
+                        dismissModal();
+                        loadData();
+                    }, 15000);
+                } else {
+                    resetActionBusy();
+                    updateModal('OK', 'Done', '', GREEN, 1500);
+                }
+            } else {
+                resetActionBusy();
+                var err = (s === 0) ? 'Daemon not running. Reboot or reinsert USB.'
+                        : (res && res.error) || 'Operation failed (HTTP ' + s + ')';
+                updateModal('ERR', 'Failed', err, RED, 5000);
+            }
+        });
     }
 
     /* ── Modal popup for operations ──────────────────────────────── */
@@ -683,8 +791,8 @@
         });
 
         var spinner = mkEl('div', {
-            fontSize: '36px', color: CYAN, marginBottom: '18px'
-        }, '↻');
+            fontSize: '28px', color: CYAN, marginBottom: '18px', fontWeight: 'bold'
+        }, '...');
         spinner.id = 'modal-icon';
         box.appendChild(spinner);
 
@@ -724,34 +832,40 @@
         modal = null;
     }
 
-    function showRebootModal(verb) {
-        updateModal('⏻', verb + ' — reboot required', 'Tap Reboot when ready', CYAN, 0);
-        var box = document.getElementById('modal-sub');
-        if (!box || !box.parentNode) return;
-        var wrap = mkEl('div', { marginTop: '20px', textAlign: 'center' });
-        var btnR = mkEl('div', {
-            display: 'inline-block', padding: '12px 36px',
-            background: CYAN, color: '#000', fontWeight: 'bold',
-            fontSize: '18px', borderRadius: '8px', cursor: 'pointer',
-            marginRight: '12px'
-        }, 'REBOOT');
-        btnR.onclick = function() {
-            updateModal('⏻', 'Rebooting...', '', CYAN, 0);
-            api('POST', '/api/system/reboot', function() {});
-        };
-        var btnS = mkEl('div', {
-            display: 'inline-block', padding: '12px 24px',
-            border: '1px solid ' + TXT3, color: TXT3,
-            fontSize: '18px', borderRadius: '8px', cursor: 'pointer'
-        }, 'LATER');
-        btnS.onclick = function() {
-            actionBusy = false;
-            dismissModal();
-            loadData();
-        };
-        wrap.appendChild(btnR);
-        wrap.appendChild(btnS);
-        box.parentNode.appendChild(wrap);
+    function showConfirmModal(text, onYes) {
+        if (modal) modal.parentNode.removeChild(modal);
+        modal = mkEl('div', {
+            position: 'fixed', top: '0', left: '0', width: '100%', height: '100%',
+            background: 'rgba(0,0,0,0.7)', zIndex: '100000',
+            display: 'block'
+        });
+        var box = mkEl('div', {
+            position: 'absolute', top: '50%', left: '50%',
+            width: '420px', marginLeft: '-210px', marginTop: '-80px',
+            background: CARD_BG, border: '1px solid ' + CARD_BD,
+            borderRadius: '16px', padding: '32px', textAlign: 'center'
+        });
+        box.appendChild(mkEl('div', {
+            fontSize: '20px', color: TXT, fontWeight: 'bold', marginBottom: '24px'
+        }, text));
+        var row = mkEl('div', { fontSize: '0' });
+        var yesBtn = mkEl('span', {
+            display: 'inline-block', padding: '10px 28px', marginRight: '12px',
+            background: RED, color: '#fff', borderRadius: '8px', cursor: 'pointer',
+            fontSize: '16px', fontWeight: 'bold'
+        }, 'YES');
+        yesBtn.onclick = function() { dismissModal(); onYes(); };
+        var noBtn = mkEl('span', {
+            display: 'inline-block', padding: '10px 28px',
+            background: BTN_BG, color: TXT2, borderRadius: '8px', cursor: 'pointer',
+            fontSize: '16px', fontWeight: 'bold', border: '1px solid ' + CARD_BD
+        }, 'CANCEL');
+        noBtn.onclick = function() { dismissModal(); };
+        row.appendChild(yesBtn);
+        row.appendChild(noBtn);
+        box.appendChild(row);
+        modal.appendChild(box);
+        document.body.appendChild(modal);
     }
 
     /* ── Helpers ───────────────────────────────────────────────────── */
@@ -779,8 +893,8 @@
 
     function start() {
         createButton();
-        setInterval(checkVisibility, 1500);
-        dbg('started, polling visibility');
+        setInterval(checkVisibility, 3000);
+        dbg('started, checking daemon liveness');
     }
 
     if (window.opera && window.opera.addEventListener) {

@@ -257,8 +257,8 @@ patch_commit() {
     # atomic swap: move work file over original
     mv "$_PATCH_WORK" "$_PATCH_FILE"
     if [ $? -ne 0 ]; then
-        # fallback: try cp
-        cp "$_PATCH_WORK" "$_PATCH_FILE"
+        # fallback: try cp (preserve permissions)
+        cp -a "$_PATCH_WORK" "$_PATCH_FILE"
         if [ $? -ne 0 ]; then
             patch_log "FAIL: cannot replace original"
             printf '%b' "$_PATCH_LOG"
@@ -278,6 +278,74 @@ patch_abort() {
     patch_log "ABORT: called explicitly"
     printf '%b' "$_PATCH_LOG"
     return 1
+}
+
+patch_append_block() {
+    _marker="$1"
+    _code="$2"
+    _desc="$3"
+    _comment="${4:-#}"
+
+    if [ $_PATCH_ERRORS -ne 0 ]; then return 1; fi
+
+    # Idempotent: skip if block already present
+    if grep -q "${_comment} ${_marker}:begin" "$_PATCH_WORK" 2>/dev/null; then
+        patch_log "SKIP append_block (already present): $_desc"
+        return 0
+    fi
+
+    printf '\n%s %s:begin\n%s\n%s %s:end\n' "$_comment" "$_marker" "$_code" "$_comment" "$_marker" >> "$_PATCH_WORK"
+    _PATCH_APPLIED=$((_PATCH_APPLIED + 1))
+    patch_log "OK append_block: $_desc"
+    return 0
+}
+
+patch_remove_block() {
+    _marker="$1"
+    _desc="$2"
+    _comment="${3:-#}"
+
+    if [ $_PATCH_ERRORS -ne 0 ]; then return 1; fi
+
+    _begin_tag="${_comment} ${_marker}:begin"
+    _end_tag="${_comment} ${_marker}:end"
+
+    # Safety: both markers must exist — otherwise refuse to edit
+    if ! grep -q "$_begin_tag" "$_PATCH_WORK" 2>/dev/null; then
+        patch_log "SKIP remove_block (begin marker not found): $_desc"
+        return 0
+    fi
+    if ! grep -q "$_end_tag" "$_PATCH_WORK" 2>/dev/null; then
+        patch_log "FAIL remove_block (end marker missing — refusing to delete to EOF): $_desc"
+        _PATCH_ERRORS=$((_PATCH_ERRORS + 1))
+        return 1
+    fi
+
+    _before=$(md5sum "$_PATCH_WORK" 2>/dev/null || md5 "$_PATCH_WORK" 2>/dev/null)
+
+    # awk: delete from begin marker through end marker (inclusive), plus blank line before
+    awk -v btag="$_begin_tag" -v etag="$_end_tag" '
+        $0 == btag || index($0, btag) { skip=1; next }
+        skip && ($0 == etag || index($0, etag)) { skip=0; next }
+        !skip { print }
+    ' "$_PATCH_WORK" > "${_PATCH_WORK}.tmp"
+    mv "${_PATCH_WORK}.tmp" "$_PATCH_WORK"
+
+    _after=$(md5sum "$_PATCH_WORK" 2>/dev/null || md5 "$_PATCH_WORK" 2>/dev/null)
+    if [ "$_before" = "$_after" ]; then
+        patch_log "WARN remove_block (no change): $_desc"
+    else
+        _PATCH_APPLIED=$((_PATCH_APPLIED + 1))
+        patch_log "OK remove_block: $_desc"
+    fi
+    return 0
+}
+
+patch_has_block() {
+    # Check if a marker block exists in the ORIGINAL file (not work copy)
+    _marker="$1"
+    _comment="${2:-#}"
+    grep -q "${_comment} ${_marker}:begin" "$_PATCH_FILE" 2>/dev/null
 }
 
 patch_rollback() {

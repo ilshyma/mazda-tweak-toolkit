@@ -1,0 +1,14 @@
+{
+  "id": "wifi-ap",
+  "name": "WiFi Access Point",
+  "version": "1.0.0",
+  "description": "Enables WiFi AP (192.168.53.1) and flushes iptables for network access on boot",
+  "author": "Tweaks Manager",
+  "min_firmware": "74.00.324",
+  "max_firmware": "74.00.324A",
+  "requires_reboot": false,
+  "regions": ["EU", "NA"],
+  "modifies": ["/jci/scripts/stage_wifi.sh"],
+  "conflicts_with": [],
+  "depends_on": []
+}

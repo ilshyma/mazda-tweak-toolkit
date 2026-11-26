@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mazda CMU Tweaks</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --accent-bg: rgba(88,166,255,0.12);
+  --success: #3fb950;
+  --success-bg: rgba(63,185,80,0.12);
+  --warn: #d29922;
+  --warn-bg: rgba(210,153,34,0.12);
+  --danger: #f85149;
+  --danger-bg: rgba(248,81,73,0.12);
+  --radius: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100dvh;
+  padding: env(safe-area-inset-top, 16px) 16px env(safe-area-inset-bottom, 16px);
+}
+.container { max-width: 480px; margin: 0 auto; }
+
+/* Header */
+.header {
+  text-align: center;
+  padding: 24px 0 16px;
+}
+.header h1 { font-size: 20px; font-weight: 600; }
+.header .version { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
+
+/* Progress */
+.progress {
+  display: flex;
+  gap: 4px;
+  padding: 0 16px;
+  margin-bottom: 24px;
+}
+.progress .step {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 0.3s;
+}
+.progress .step.done { background: var(--success); }
+.progress .step.active { background: var(--accent); }
+
+/* Cards */
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.card h2 { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+.card .subtitle { font-size: 13px; color: var(--text-dim); margin-bottom: 16px; }
+
+/* Status badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+.badge.ok { background: var(--success-bg); color: var(--success); }
+.badge.warn { background: var(--warn-bg); color: var(--warn); }
+.badge.err { background: var(--danger-bg); color: var(--danger); }
+.badge.info { background: var(--accent-bg); color: var(--accent); }
+
+/* Buttons */
+.actions { display: flex; flex-direction: column; gap: 8px; }
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border: none;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  width: 100%;
+}
+.btn:active { opacity: 0.7; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.secondary { background: var(--border); color: var(--text); }
+.btn.danger { background: var(--danger); color: #fff; }
+.btn.ghost { background: transparent; color: var(--text-dim); font-weight: 400; }
+
+/* Log output */
+.log-box {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 12px 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* Info block */
+.info-block {
+  background: var(--accent-bg);
+  border: 1px solid rgba(88,166,255,0.2);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  color: var(--accent);
+  line-height: 1.5;
+  margin: 12px 0;
+}
+.info-block code {
+  background: rgba(88,166,255,0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'SF Mono', monospace;
+  font-size: 12px;
+}
+
+/* Spinner */
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Step sections */
+.step-section { display: none; }
+.step-section.active { display: block; }
+
+/* Connection check list */
+.check-list { list-style: none; margin: 12px 0; }
+.check-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.check-list li:last-child { border-bottom: none; }
+.check-icon { font-size: 16px; width: 20px; text-align: center; }
+.check-icon.ok { color: var(--success); }
+.check-icon.fail { color: var(--danger); }
+.check-icon.wait { color: var(--text-dim); }
+
+/* Tweak list */
+.tweak-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tweak-item:last-child { border-bottom: none; }
+.tweak-name { font-size: 14px; font-weight: 500; }
+.tweak-ver { font-size: 12px; color: var(--text-dim); }
+.tweak-actions { display: flex; gap: 6px; }
+.tweak-actions .btn { width: auto; padding: 6px 14px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>Mazda CMU Tweaks</h1>
+    <div class="version" id="version">Connecting...</div>
+  </div>
+
+  <div class="progress">
+    <div class="step" id="prog-0"></div>
+    <div class="step" id="prog-1"></div>
+  </div>
+
+  <!-- Step 0: Connecting / Welcome -->
+  <div class="step-section active" id="step-connect">
+    <div class="card" id="connect-spinner">
+      <h2>Connecting to CMU</h2>
+      <p class="subtitle">Checking system status...</p>
+      <div style="text-align:center;padding:24px 0">
+        <div class="spinner" style="width:32px;height:32px;border-width:3px"></div>
+      </div>
+    </div>
+    <div class="card" id="connect-choice" style="display:none">
+      <h2 id="choice-title">Tweaks Manager</h2>
+      <p class="subtitle" id="choice-subtitle"></p>
+      <div id="choice-status" style="margin-bottom:16px"></div>
+      <div class="actions" id="choice-actions"></div>
+    </div>
+  </div>
+
+  <!-- Step 1: Tweaks Manager -->
+  <div class="step-section" id="step-tweaks">
+    <div class="card" id="tweaks-setup-card">
+      <h2>Tweaks Manager</h2>
+      <p class="subtitle">Daemon setup on CMU</p>
+      <div id="manager-status"></div>
+      <div id="manager-actions" class="actions"></div>
+    </div>
+    <div class="card" id="tweaks-list-card" style="display:none">
+      <h2>Available Tweaks</h2>
+      <p class="subtitle">Install and manage CMU modifications</p>
+      <div id="tweaks-status"></div>
+      <div id="tweaks-list"></div>
+      <div class="actions" id="tweaks-actions"></div>
+    </div>
+  </div>
+
+  <!-- Step 4: Done -->
+  <div class="step-section" id="step-done">
+    <div class="card">
+      <h2>Setup complete</h2>
+      <p class="subtitle">Your CMU is ready</p>
+      <div class="badge ok">&#x2713; All configured</div>
+      <div class="actions">
+        <button class="btn primary" onclick="goStep('tweaks')">Manage tweaks</button>
+        <button class="btn secondary" onclick="reboot()">Reboot CMU</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+var API = window.location.origin;
+var state = {};
+var connectAttempts = 0;
+
+function $(id) { return document.getElementById(id); }
+
+function api(path, method, body) {
+  var opts = { method: method || 'GET' };
+  if (body) {
+    opts.body = typeof body === 'string' ? body : JSON.stringify(body);
+    opts.headers = { 'Content-Type': 'application/json' };
+  }
+  return fetch(API + path, opts).then(function(r) { return r.json(); });
+}
+
+function goStep(name) {
+  var steps = document.querySelectorAll('.step-section');
+  for (var i = 0; i < steps.length; i++) steps[i].classList.remove('active');
+  $('step-' + name).classList.add('active');
+
+  var map = { connect: 0, tweaks: 1, done: 1 };
+  var idx = map[name] || 0;
+  for (var j = 0; j < 2; j++) {
+    var el = $('prog-' + j);
+    el.classList.remove('done', 'active');
+    if (j < idx) el.classList.add('done');
+    if (j === idx) el.classList.add('active');
+  }
+  if (name === 'tweaks') loadTweaks();
+}
+
+function showChoice(connected) {
+  $('connect-spinner').style.display = 'none';
+  $('connect-choice').style.display = 'block';
+  var actions = $('choice-actions');
+  actions.innerHTML = '';
+
+  if (!connected) {
+    $('choice-title').textContent = 'CMU not reachable';
+    $('choice-subtitle').textContent = 'Could not connect to tweaksd';
+    $('choice-status').innerHTML =
+      '<div class="badge warn">&#x26A0; No connection</div>' +
+      '<div class="info-block">Make sure the USB drive is inserted and the CMU is powered on.</div>';
+    actions.innerHTML =
+      '<button class="btn primary" onclick="retryConnection()">Retry</button>' +
+      '<button class="btn ghost" onclick="closeWizard()">Close</button>';
+    return;
+  }
+
+  var installed = state.manager_installed;
+  var ver = state.version || '?';
+
+  if (installed) {
+    $('choice-title').textContent = 'Tweaks Manager';
+    $('choice-subtitle').textContent = 'Installed — v' + ver;
+    $('choice-status').innerHTML = '<div class="badge ok">&#x2713; v' + ver + ' installed</div>';
+    actions.innerHTML =
+      '<button class="btn primary" onclick="startUpdate()">Update</button>' +
+      '<button class="btn danger" onclick="startUninstall()">Uninstall</button>' +
+      '<button class="btn ghost" onclick="closeWizard()">Close</button>';
+  } else {
+    $('choice-title').textContent = 'Tweaks Manager';
+    $('choice-subtitle').textContent = 'Not installed on this CMU';
+    $('choice-status').innerHTML = '<div class="badge info">&#x2139; Ready to install</div>';
+    actions.innerHTML =
+      '<button class="btn primary" onclick="startInstall()">Install</button>' +
+      '<button class="btn ghost" onclick="closeWizard()">Close</button>';
+  }
+}
+
+function startInstall() {
+  goStep('tweaks');
+}
+
+function startUpdate() {
+  goStep('tweaks');
+}
+
+function startUninstall() {
+  if (!confirm('Uninstall Tweaks Manager and all tweaks from CMU?')) return;
+  $('choice-status').innerHTML = '<div style="text-align:center;padding:12px"><span class="spinner"></span> Uninstalling...</div>';
+  $('choice-actions').innerHTML = '';
+  api('/api/manager/uninstall', 'POST').then(function(d) {
+    if (d && d.ok) {
+      $('choice-status').innerHTML = '<div class="badge ok">&#x2713; Uninstalled</div>' +
+        '<div class="info-block">Tweaks Manager removed. Reboot CMU to complete cleanup.</div>';
+      $('choice-actions').innerHTML =
+        '<button class="btn primary" onclick="reboot()">Reboot CMU</button>' +
+        '<button class="btn ghost" onclick="closeWizard()">Close</button>';
+    } else {
+      $('choice-status').innerHTML = '<div class="badge err">Uninstall failed: ' + ((d && d.error) || 'unknown') + '</div>';
+      showChoice(true);
+    }
+  }).catch(function() {
+    $('choice-status').innerHTML = '<div class="badge err">Connection lost</div>';
+    $('choice-actions').innerHTML =
+      '<button class="btn primary" onclick="retryConnection()">Retry</button>' +
+      '<button class="btn ghost" onclick="closeWizard()">Close</button>';
+  });
+}
+
+function retryConnection() {
+  $('connect-choice').style.display = 'none';
+  $('connect-spinner').style.display = 'block';
+  $('version').textContent = 'Connecting...';
+  connectAttempts = 0;
+  init();
+}
+
+function closeWizard() {
+  document.body.innerHTML = '<div style="text-align:center;padding:80px 24px;color:var(--text-dim);font-size:16px">Wizard closed. Reload to restart.</div>';
+}
+
+function init() {
+  api('/api/wizard/state').then(function(d) {
+    state = d;
+    $('version').textContent = 'tweaksd v' + (d.version || '?');
+    showChoice(true);
+  }).catch(function() {
+    connectAttempts++;
+    if (connectAttempts >= 3) {
+      state = {};
+      showChoice(false);
+    } else {
+      $('version').textContent = 'Connecting... (' + connectAttempts + ')';
+      setTimeout(init, 2000);
+    }
+  });
+}
+
+function reboot() {
+  if (!confirm('Reboot the CMU now?')) return;
+  api('/api/system/reboot', 'POST').then(function() {
+    goStep('connect');
+    $('version').textContent = 'Rebooting...';
+    setTimeout(init, 30000);
+  });
+}
+
+function loadTweaks() {
+  var mStatus = $('manager-status');
+  var mActions = $('manager-actions');
+  mStatus.innerHTML = '<div style="text-align:center;padding:12px"><span class="spinner"></span></div>';
+  mActions.innerHTML = '';
+  $('tweaks-list-card').style.display = 'none';
+
+  api('/api/manager/status').then(function(ms) {
+    renderManagerStatus(ms);
+    if (ms.installed && ms.running) {
+      $('tweaks-list-card').style.display = 'block';
+      loadTweaksList();
+    }
+  }).catch(function() {
+    mStatus.innerHTML = '<div class="badge err">Cannot reach CMU</div>';
+  });
+}
+
+function renderManagerStatus(ms) {
+  var mStatus = $('manager-status');
+  var mActions = $('manager-actions');
+
+  if (ms.installed && ms.running) {
+    mStatus.innerHTML =
+      '<div class="badge ok">&#x2713; Installed &amp; running</div>' +
+      '<div class="info-block">' +
+        'Daemon: <strong>running</strong> (v' + (ms.version || '?') + ')<br>' +
+        'Boot autostart: <strong>' + (ms.daemon_on_boot ? 'enabled' : 'disabled') + '</strong><br>' +
+        'Files: <code>/data_persist/tweaks/</code>' +
+      '</div>';
+    mActions.innerHTML = '';
+  } else if (ms.installed) {
+    mStatus.innerHTML =
+      '<div class="badge warn">&#x26A0; Installed but not running</div>' +
+      '<div class="info-block">Daemon is installed but not active. A reboot should start it.</div>';
+    mActions.innerHTML =
+      '<button class="btn primary" onclick="reboot()">Reboot CMU</button>';
+  } else {
+    mStatus.innerHTML =
+      '<div class="badge info">&#x2139; Not installed</div>' +
+      '<div class="info-block">' +
+        'Tweaks Manager daemon will be copied to CMU and set up to start on boot.<br>' +
+        'Files are stored in <code>/data_persist/tweaks/</code> (persists across reboots).' +
+      '</div>';
+    mActions.innerHTML =
+      '<button class="btn primary" onclick="setupManager()">Setup Tweaks Manager</button>' +
+      '<button class="btn ghost" onclick="goStep(\'done\')">Skip</button>';
+  }
+}
+
+function setupManager() {
+  var mActions = $('manager-actions');
+  mActions.innerHTML = '<button class="btn primary" disabled><span class="spinner"></span> Setting up...</button>';
+
+  api('/api/manager/setup', 'POST').then(function(d) {
+    if (d.ok) {
+      loadTweaks();
+    } else {
+      mActions.innerHTML =
+        '<button class="btn danger" onclick="setupManager()">Retry</button>';
+    }
+  }).catch(function() {
+    mActions.innerHTML =
+      '<button class="btn danger" onclick="setupManager()">Retry</button>';
+  });
+}
+
+function loadTweaksList() {
+  var status = $('tweaks-status');
+  var list = $('tweaks-list');
+  var actions = $('tweaks-actions');
+
+  status.innerHTML = '<div style="text-align:center;padding:12px"><span class="spinner"></span></div>';
+  list.innerHTML = '';
+  actions.innerHTML = '';
+
+  Promise.all([
+    api('/api/tweaks/list'),
+    api('/api/usb/scan')
+  ]).then(function(results) {
+    var installed = results[0].tweaks || [];
+    var usb = results[1].tweaks || [];
+    var installedIds = {};
+    for (var i = 0; i < installed.length; i++) {
+      installedIds[installed[i].id] = installed[i];
+    }
+
+    var allTweaks = [];
+    for (var j = 0; j < usb.length; j++) {
+      var t = JSON.parse(JSON.stringify(usb[j]));
+      if (installedIds[t.id] && installedIds[t.id].installed) {
+        t.installed = true;
+      }
+      allTweaks.push(t);
+    }
+    for (var k = 0; k < installed.length; k++) {
+      if (installed[k].installed) {
+        var exists = false;
+        for (var m = 0; m < allTweaks.length; m++) {
+          if (allTweaks[m].id === installed[k].id) { exists = true; break; }
+        }
+        if (!exists) allTweaks.push(installed[k]);
+      }
+    }
+
+    if (allTweaks.length === 0) {
+      status.innerHTML = '<div class="badge warn">No tweaks found on USB</div>';
+      return;
+    }
+
+    var count = 0;
+    for (var n = 0; n < allTweaks.length; n++) {
+      if (allTweaks[n].installed) count++;
+    }
+    status.innerHTML = '<div class="badge info">' + allTweaks.length + ' available, ' + count + ' installed</div>';
+
+    var html = '';
+    for (var p = 0; p < allTweaks.length; p++) {
+      var tw = allTweaks[p];
+      html += '<div class="tweak-item" id="tw-' + tw.id + '">' +
+        '<div><div class="tweak-name">' + tw.name + '</div>' +
+        '<div class="tweak-ver">v' + tw.version + ' &mdash; ' + tw.description + '</div></div>' +
+        '<div class="tweak-actions">';
+      if (tw.installed) {
+        html += '<button class="btn secondary" onclick="uninstallTweak(\'' + tw.id + '\')">Remove</button>';
+      } else {
+        html += '<button class="btn primary" onclick="installTweak(\'' + tw.id + '\')">Install</button>';
+      }
+      html += '</div></div>';
+    }
+    list.innerHTML = html;
+
+    actions.innerHTML = '<button class="btn ghost" onclick="goStep(\'done\')" style="margin-top:8px">Done</button>';
+  });
+}
+
+function installTweak(id) {
+  var item = document.querySelector('#tw-' + id + ' .tweak-actions');
+  if (item) item.innerHTML = '<button class="btn primary" disabled><span class="spinner"></span></button>';
+  api('/api/tweaks/install/' + id, 'POST').then(function(d) {
+    if (d.ok) {
+      loadTweaksList();
+    } else {
+      if (item) item.innerHTML = '<button class="btn danger" onclick="installTweak(\'' + id + '\')">Retry</button>';
+    }
+  });
+}
+
+function uninstallTweak(id) {
+  var item = document.querySelector('#tw-' + id + ' .tweak-actions');
+  if (item) item.innerHTML = '<button class="btn secondary" disabled><span class="spinner"></span></button>';
+  api('/api/tweaks/uninstall/' + id, 'POST').then(function(d) {
+    if (d.ok) {
+      loadTweaksList();
+    } else {
+      if (item) item.innerHTML = '<button class="btn danger" onclick="uninstallTweak(\'' + id + '\')">Retry</button>';
+    }
+  });
+}
+
+init();
+</script>
+</body>
+</html>

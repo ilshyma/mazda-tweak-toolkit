@@ -1,16 +1,14 @@
 {
   "id": "ssh-access",
   "name": "SSH Access",
-  "version": "1.0.0",
-  "description": "Enables SSH daemon with persistent autostart. Connect: ssh root@192.168.53.1 password: jci",
-  "author": "MZD-AIO community",
-  "min_firmware": "59.00.502",
+  "version": "2.0.0",
+  "description": "Enables SSH on port 22 with password auth (user: cmu/root, pass: jci)",
+  "author": "Tweaks Manager",
+  "min_firmware": "74.00.324",
   "max_firmware": "74.00.324A",
-  "requires_reboot": true,
-  "regions": ["EU", "NA", "JP", "ADR"],
-  "modifies": [
-    "/jci/scripts/stage_wifi.sh"
-  ],
+  "requires_reboot": false,
+  "regions": ["EU", "NA"],
+  "modifies": ["/jci/scripts/stage_wifi.sh"],
   "conflicts_with": [],
-  "depends_on": []
+  "depends_on": ["wifi-ap"]
 }
