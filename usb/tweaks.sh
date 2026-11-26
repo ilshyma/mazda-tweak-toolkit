@@ -253,6 +253,32 @@ else
     # ── Recovery: clean up CMU ─────────────────────────────────────
     log "=== RECOVERY MODE ==="
     panel "Recovery..."
+
+    # Kill running processes first
+    killall tweaksd 2>/dev/null && log "Killed tweaksd"
+    killall sshd 2>/dev/null && log "Killed sshd"
+
+    # Run uninstall scripts for any installed tweaks (uses their own undo logic)
+    if [ -d /data_persist/tweaks/installed ]; then
+        # Deploy patch.sh so uninstall scripts can source it
+        mkdir -p /data_persist/tweaks/lib
+        [ -f "$LIB_SRC" ] && cp "$LIB_SRC" /data_persist/tweaks/lib/patch.sh
+
+        mount -o remount,rw / 2>/dev/null
+        for TDIR in /data_persist/tweaks/installed/*/; do
+            [ -d "$TDIR" ] || continue
+            TID=$(basename "$TDIR")
+            if [ -x "$TDIR/uninstall.sh" ]; then
+                log "Running uninstall for $TID..."
+                TWEAK_DIR="$TDIR" TWEAKS_LIB="/data_persist/tweaks/lib/patch.sh" NO_REBOOT=1 \
+                    sh "$TDIR/uninstall.sh" >> "$LOG" 2>&1 || log "WARN: uninstall $TID exited $?"
+            else
+                log "WARN: no uninstall.sh for $TID, skipping"
+            fi
+        done
+        mount -o remount,ro / 2>/dev/null
+    fi
+
     mount -o remount,rw / 2>/dev/null
 
     # Remove tweaks-menu.js
@@ -269,18 +295,18 @@ else
         log "Cleaned opera.ini"
     fi
 
-    # Remove ALL tweak marker blocks from stage_wifi.sh
+    # Remove known tweak marker blocks from stage_wifi.sh (explicit names for BusyBox compat)
     STAGE_WIFI="/jci/scripts/stage_wifi.sh"
-    if [ -f "$STAGE_WIFI" ] && grep -q '# tweaks:' "$STAGE_WIFI" 2>/dev/null; then
-        _sed_i '/# tweaks:.*:begin/,/# tweaks:.*:end/d' "$STAGE_WIFI" 2>/dev/null
-        log "Removed tweak markers from stage_wifi.sh"
+    if [ -f "$STAGE_WIFI" ]; then
+        for MARKER in wifi-ap ssh-access; do
+            if grep -q "# tweaks:${MARKER}:begin" "$STAGE_WIFI" 2>/dev/null; then
+                _sed_i "/# tweaks:${MARKER}:begin/,/# tweaks:${MARKER}:end/d" "$STAGE_WIFI" 2>/dev/null
+                log "Removed tweaks:${MARKER} from stage_wifi.sh"
+            fi
+        done
     fi
 
     mount -o remount,ro / 2>/dev/null
-
-    # Kill running processes
-    killall tweaksd 2>/dev/null && log "Killed tweaksd"
-    killall sshd 2>/dev/null && log "Killed sshd"
 
     # Clean data_persist traces
     rm -rf /data_persist/tweaks 2>/dev/null && log "Removed /data_persist/tweaks"
@@ -341,7 +367,7 @@ mount -o remount,rw / 2>/dev/null
 
 if ! grep -qi 'User JavaScript=1' "$OPERA_INI" 2>/dev/null; then
     if grep -qi '\[User Prefs\]' "$OPERA_INI" 2>/dev/null; then
-        sed -i '/\[User Prefs\]/a User JavaScript=1' "$OPERA_INI" 2>/dev/null
+        _sed_i '/\[User Prefs\]/a User JavaScript=1' "$OPERA_INI" 2>/dev/null
     else
         printf '\n[User Prefs]\nUser JavaScript=1\n' >> "$OPERA_INI" 2>/dev/null
     fi
@@ -349,7 +375,7 @@ if ! grep -qi 'User JavaScript=1' "$OPERA_INI" 2>/dev/null; then
 fi
 
 if ! grep -qi 'User JavaScript File=' "$OPERA_INI" 2>/dev/null; then
-    sed -i "/\[User Prefs\]/a User JavaScript File=$OPERA_USERJS" "$OPERA_INI" 2>/dev/null
+    _sed_i "/\[User Prefs\]/a User JavaScript File=$OPERA_USERJS" "$OPERA_INI" 2>/dev/null
 fi
 
 mkdir -p "$OPERA_USERJS"

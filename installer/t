@@ -1,71 +1,13 @@
 #!/bin/sh
 # .up trampoline — called via CVE-2024-8359 filename injection
-# Starts tweaksd as TEMP server, waits for popup action, then exits.
+# v2.0: simply find and launch the USB runner script.
 L=/tmp/tweaksd-up-lock
 mkdir "$L" 2>/dev/null || exit 0
 echo $$ > "$L/pid"
 
-# find our USB mount
-USB=""
+# find our USB mount (look for the runner script at root)
 for d in /tmp/mnt/sd[abcd]1 /mnt/sd[abcd]1; do
-    [ -f "$d/tweaks-manager/installer/tweaks.sh" ] && { USB="$d"; break; }
+    [ -f "$d/tweaks.sh" ] && { sh "$d/tweaks.sh"; rm -rf "$L"; exit 0; }
 done
 
-if [ -z "$USB" ]; then
-    rm -rf "$L"
-    exit 0
-fi
-
-TWEAKSD="$USB/tweaks-manager/installer/tweaksd"
-INSTALLED_TWEAKSD="/data_persist/tweaks/tweaksd"
-
-# Kill any leftover tweaksd
-killall tweaksd 2>/dev/null
-sleep 1
-
-# Pick the best available tweaksd binary (USB first, then installed)
-DAEMON=""
-if [ -x "$TWEAKSD" ]; then
-    DAEMON="$TWEAKSD"
-elif [ -x "$INSTALLED_TWEAKSD" ]; then
-    DAEMON="$INSTALLED_TWEAKSD"
-fi
-
-if [ -z "$DAEMON" ]; then
-    # No daemon available — first install, run directly
-    sh "$USB/tweaks-manager/installer/tweaks.sh" "$USB" "install"
-    rm -rf "$L"
-    exit 0
-fi
-
-# Start temp tweaksd (foreground mode, in background)
-"$DAEMON" -f &
-DAEMON_PID=$!
-
-# Wait for popup action — tweaksd writes action to this file
-ACTION_FILE="/tmp/tweaks_action"
-rm -f "$ACTION_FILE"
-
-# Auto-shutdown after 5 minutes of no action
-TIMEOUT=300
-ELAPSED=0
-while [ $ELAPSED -lt $TIMEOUT ]; do
-    if [ -f "$ACTION_FILE" ]; then
-        ACTION=$(cat "$ACTION_FILE")
-        rm -f "$ACTION_FILE"
-        if [ -n "$ACTION" ] && [ "$ACTION" != "close" ]; then
-            sh "$USB/tweaks-manager/installer/tweaks.sh" "$USB" "$ACTION"
-            # Signal completion — daemon polls every 1s, give it time to respond
-            echo "done" > /tmp/tweaks_result
-            sleep 3
-        fi
-        break
-    fi
-    sleep 2
-    ELAPSED=$((ELAPSED + 2))
-done
-
-# Cleanup
-kill $DAEMON_PID 2>/dev/null
-rm -f "$ACTION_FILE" /tmp/tweaks_result
 rm -rf "$L"

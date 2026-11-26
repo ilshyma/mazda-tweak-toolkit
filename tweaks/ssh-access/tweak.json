@@ -8,7 +8,7 @@
   "max_firmware": "74.00.324A",
   "requires_reboot": false,
   "regions": ["EU", "NA"],
-  "modifies": [],
+  "modifies": ["/jci/scripts/stage_wifi.sh"],
   "conflicts_with": [],
   "depends_on": ["wifi-ap"]
 }

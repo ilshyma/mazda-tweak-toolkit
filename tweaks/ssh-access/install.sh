@@ -16,17 +16,21 @@ if [ ! -f "$STAGE_WIFI" ]; then
     exit 1
 fi
 
-# Break /etc/passwd symlink if needed
+# Break /etc/passwd symlink if needed (save target for uninstall restore)
+PASSWD_BAK="/data_persist/tweaks/backups/ssh-access"
+mkdir -p "$PASSWD_BAK"
 if [ -L /etc/passwd ]; then
     REAL=$(readlink -f /etc/passwd 2>/dev/null || readlink /etc/passwd 2>/dev/null)
+    # Save original symlink target so uninstall can restore it
+    echo "$REAL" > "$PASSWD_BAK/passwd_symlink_target"
     if [ -n "$REAL" ] && [ -f "$REAL" ]; then
         cp "$REAL" /etc/passwd.tmp && mv /etc/passwd.tmp /etc/passwd
-        echo "broke /etc/passwd symlink -> writable copy"
+        echo "broke /etc/passwd symlink -> writable copy (target saved)"
     else
         for CAND in /config-mfg/passwd /jci/passwd /etc/passwd.orig; do
             if [ -f "$CAND" ]; then
                 cp "$CAND" /etc/passwd.tmp && mv /etc/passwd.tmp /etc/passwd
-                echo "broke symlink -> copy from $CAND"
+                echo "broke symlink -> copy from $CAND (target saved)"
                 break
             fi
         done

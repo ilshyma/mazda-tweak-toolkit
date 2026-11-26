@@ -35,6 +35,18 @@ fi
 
 # Remove config
 rm -f /data_persist/tweaks/sshd_tweaks.conf 2>/dev/null
+
+# Restore /etc/passwd symlink if we broke it during install
+PASSWD_BAK="/data_persist/tweaks/backups/ssh-access"
+if [ -f "$PASSWD_BAK/passwd_symlink_target" ]; then
+    TARGET=$(cat "$PASSWD_BAK/passwd_symlink_target")
+    if [ -n "$TARGET" ] && [ -f "$TARGET" ]; then
+        ln -sf "$TARGET" /etc/passwd
+        echo "restored /etc/passwd symlink -> $TARGET"
+    fi
+    rm -f "$PASSWD_BAK/passwd_symlink_target"
+fi
+
 echo "SSH stopped and config removed"
 
 [ "${NO_REBOOT:-0}" != "1" ] && (sleep 5 && reboot) >/dev/null 2>&1 &
