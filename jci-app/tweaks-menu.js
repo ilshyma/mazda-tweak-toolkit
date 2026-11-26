@@ -1,8 +1,8 @@
 /*
  * Tweaks Manager v2 — Opera 12 / Presto UI
  * Pure DOM overlay, no framework deps. Inline styles (no CSS vars).
- * Shows TWEAKS button in Settings, fullscreen overlay with cards.
- * USB required — won't open without it (fool-proof).
+ * Shows TWEAKS button only when tweaksd daemon is alive (USB inserted).
+ * Hides completely when daemon stops (USB removed).
  * Mandatory backup+log sync to USB on every open.
  * Scaled for 7" 800x480 CMU screen.
  */
@@ -124,9 +124,35 @@
     }
 
     function checkVisibility() {
-        if (!visible) {
+        try {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', TWEAKSD + '/api/version', true);
+            var done = false;
+            var timer = setTimeout(function() {
+                if (!done) { done = true; try { xhr.abort(); } catch(e) {} setVisible(false); }
+            }, 3000);
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4 && !done) {
+                    done = true;
+                    clearTimeout(timer);
+                    setVisible(xhr.status === 200);
+                }
+            };
+            xhr.onerror = function() {
+                if (!done) { done = true; clearTimeout(timer); setVisible(false); }
+            };
+            xhr.send();
+        } catch(e) { setVisible(false); }
+    }
+
+    function setVisible(show) {
+        if (show && !visible) {
             if (btn) btn.style.display = 'block';
             visible = true;
+        } else if (!show && visible) {
+            if (btn) btn.style.display = 'none';
+            if (overlay) overlay.style.display = 'none';
+            visible = false;
         }
     }
 
@@ -867,9 +893,8 @@
 
     function start() {
         createButton();
-        setInterval(checkVisibility, 1500);
-        dbg('started, auto-opening UI');
-        setTimeout(function() { showUI(); }, 2000);
+        setInterval(checkVisibility, 3000);
+        dbg('started, checking daemon liveness');
     }
 
     if (window.opera && window.opera.addEventListener) {

@@ -212,6 +212,16 @@ if [ "$FW_NUM" != "74.00.324" ]; then
     log "User continued despite FW warning"
 fi
 
+# ── User confirmation ───────────────────────────────────────────────
+"$DLG" --question --title "$TITLE" \
+    --text "Tweaks Manager v$VERSION\nFirmware: $FW\n\nStart tweak manager from USB?\n(Daemon runs only while USB is inserted)" \
+    --ok-label "Start" --cancel-label "Cancel"
+if [ $? -ne 0 ]; then
+    log "User cancelled"
+    exit 0
+fi
+log "User confirmed start"
+
 # ── Deploy patch library ────────────────────────────────────────────
 log "Deploying patch library..."
 mkdir -p /data_persist/tweaks/lib
